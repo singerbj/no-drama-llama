@@ -60,23 +60,47 @@ fn edit(f: impl Fn(&mut Settings) + Send + Sync + 'static) -> Act {
 
 pub(crate) const ICON_SIZE: usize = 32;
 
-/// 32x32 anti-aliased status dot (RGBA).
+/// The favicon's llama without its dot, 32x32 RGBA (rendered by scripts/tray-icon.ts).
+const LLAMA: &[u8; ICON_SIZE * ICON_SIZE * 4] = include_bytes!("../../icons/tray-llama.rgba");
+
+/// Where the status dot sits: the favicon's dot (center 49,50, radius 9, 2.5 outline on a 64
+/// grid) at half scale.
+pub(crate) const DOT_CENTER: (f32, f32) = (24.5, 25.0);
+const DOT_RADIUS: f32 = 4.5;
+const DOT_OUTLINE: f32 = 1.25;
+const OUTLINE_RGB: (u8, u8, u8) = (0x2b, 0x21, 0x18);
+
+/// 32x32 tray icon (RGBA): the llama with an anti-aliased dot in the status color.
 pub(crate) fn dot_rgba(t: Tone) -> Vec<u8> {
-    let (r, g, b) = osd::tone_rgb(t);
     const N: usize = ICON_SIZE;
-    let mut rgba = vec![0u8; N * N * 4];
-    let (c, radius) = (N as f32 / 2.0, 12.5f32);
+    let mut rgba = LLAMA.to_vec();
+    let (cx, cy) = DOT_CENTER;
     for y in 0..N {
         for x in 0..N {
-            let d = ((x as f32 + 0.5 - c).powi(2) + (y as f32 + 0.5 - c).powi(2)).sqrt();
-            let cover = (radius + 0.5 - d).clamp(0.0, 1.0);
-            let edge = (d - (radius - 2.0)).clamp(0.0, 1.0) * 0.55; // dark outline
+            let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
             let px = &mut rgba[(y * N + x) * 4..][..4];
-            let mix = |v: u8| (v as f32 * (1.0 - edge)) as u8;
-            px.copy_from_slice(&[mix(r), mix(g), mix(b), (cover * 255.0) as u8]);
+            for (rgb, radius) in [
+                (OUTLINE_RGB, DOT_RADIUS + DOT_OUTLINE / 2.0),
+                (osd::tone_rgb(t), DOT_RADIUS - DOT_OUTLINE / 2.0),
+            ] {
+                over(px, rgb, (radius + 0.5 - d).clamp(0.0, 1.0));
+            }
         }
     }
     rgba
+}
+
+/// Paints `rgb` at coverage `a` over a straight-alpha RGBA pixel.
+fn over(px: &mut [u8], (r, g, b): (u8, u8, u8), a: f32) {
+    let da = px[3] as f32 / 255.0;
+    let oa = a + da * (1.0 - a);
+    if oa == 0.0 {
+        return;
+    }
+    for (c, s) in px[..3].iter_mut().zip([r, g, b]) {
+        *c = ((s as f32 * a + *c as f32 * da * (1.0 - a)) / oa).round() as u8;
+    }
+    px[3] = (oa * 255.0).round() as u8;
 }
 
 fn dot_icon(t: Tone) -> Icon {

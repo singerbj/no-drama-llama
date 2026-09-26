@@ -209,9 +209,15 @@ fn colors_and_icons() {
         let n = tray::ICON_SIZE;
         assert_eq!(px.len(), n * n * 4);
         assert_eq!(px[3], 0, "corner is transparent");
-        let c = ((n / 2) * n + n / 2) * 4;
+        let at = |x: usize, y: usize| &px[(y * n + x) * 4..][..4];
+        assert_eq!(at(12, 20), [0xf5, 0xe6, 0xd3, 255], "the llama's body");
+        let (x, y) = tray::DOT_CENTER;
         let (r, g, b) = osd::tone_rgb(t);
-        assert_eq!(&px[c..c + 4], &[r, g, b, 255], "center is the status color");
+        assert_eq!(
+            at(x as usize, y as usize),
+            [r, g, b, 255],
+            "dot is the status color"
+        );
     }
 }
 
