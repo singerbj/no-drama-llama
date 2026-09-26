@@ -57,7 +57,7 @@ All numeric values (paddings, radii, sizes) are copied from the source CSS.
 
 ## ICONOGRAPHY
 - **Logo:** `assets/logo.svg` — a white llama in dark shades on a mint disc (`#3DDC84`, identical to `--tone-running`); the `<g class="status">` disc is recoloured per tone for the tray icon. `assets/icon.ico` is the Windows icon. Don't redraw or restyle it.
-- **UI icons:** the settings window uses none — text buttons only. The website uses inline stroke SVG icons (28px, stroke 1.8, round caps/joins, accent-stroked) that are not published as files in the repo. **Substitution:** this system uses **Lucide** (`lucide-static@0.460.0` from unpkg) via the `Icon` component, which masks the SVG so it takes any token colour. Lucide's stroke is 2 vs the site's 1.8 — close, flagged.
+- **UI icons:** the settings window uses none — text buttons only, plus the select chevron. Every other icon is **our own** line set in `assets/icons/`: a 24px grid, stroke 1.8, round caps and joins, `stroke="currentColor"` so it takes any token colour (28px accent- or tone-tinted on feature cards, 18px in buttons). The site's feature icons (`gpu`, `eye`, `api`, `tray`, `key`, `box`, `moon`, `shield`), its theme toggle (`theme`) and Download button (`windows`) come from these files, and so does the app's select `chevron-down`. The `Icon` component renders them inline. Don't substitute another icon set (Lucide, etc.): draw a new icon in the same style and add it to the folder and to `Icon.jsx`.
 - **Status is the icon language:** solid round tone dots (14px header, 10px inline, 8px small; never ringed) carry state everywhere. Use `StatusDot`, not emoji.
 - **Unicode:** `→` in text links ("Read the docs →"), `·` as separator, `★` recommended model, `+ / −` FAQ markers.
 - **Emoji:** not used in UI.
@@ -67,7 +67,7 @@ All numeric values (paddings, radii, sizes) are copied from the source CSS.
 ## Index
 - `styles.css` — entry point (imports only) → `tokens/fonts.css`, `colors.css`, `typography.css`, `spacing.css`, `base.css`
 - `fonts/` — Google Sans Code (roman + italic, variable 300–800) and Unbounded (variable 400–800), latin + latin-ext woff2
-- `assets/` — `logo.svg`, `icon.ico`
+- `assets/` — `logo.svg`, `icon.ico`, `icons/` (our line icons)
 - `guidelines/` — foundation specimen cards (Colors, Type, Spacing, Brand)
 - `components/` — React primitives (see below), one `.card.html` per folder
 - `ui_kits/settings-window/` — settings window recreation
@@ -83,6 +83,6 @@ All numeric values (paddings, radii, sizes) are copied from the source CSS.
 - **marketing/** — Eyebrow, Chip, FeatureCard, StepCard, WindowFrame, VramBar, StateTimeline, CodeWindow, FaqItem, DataTable
 
 ### Intentional additions
-- **Icon** — wrapper for the Lucide substitute set; the site's own inline icons aren't available as files.
+- **Icon** — renders our own line icons from `assets/icons/`.
 - **PillButton** is separate from Button because the site (`.btn`) and app (`button`) buttons are distinct in the source.
 - Tone **game** (grape) comes from the site's `--game` token, promoted to a full status tone.

@@ -1,8 +1,8 @@
 import type { CSSProperties } from 'react';
-/** Line icon (Lucide) tinted by CSS. Intentional addition — the site ships inline stroke SVGs of the same style. */
+/** One of No Drama Llama's own line icons (assets/icons/), tinted by CSS. */
 export interface IconProps {
-  /** lucide icon name, e.g. "cpu", "gamepad-2", "download" */
-  name: string;
+  /** a file name in assets/icons/ */
+  name: 'api' | 'box' | 'chevron-down' | 'eye' | 'gpu' | 'key' | 'moon' | 'shield' | 'theme' | 'tray' | 'windows';
   size?: number;
   /** any CSS colour; defaults to currentColor */
   color?: string;

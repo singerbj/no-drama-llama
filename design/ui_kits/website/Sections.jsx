@@ -7,14 +7,14 @@ const link = { display: "inline-block", marginTop: "1.25rem", color: "var(--acce
 const split = { ...S.wrap, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))", gap: "clamp(2rem, 5vw, 4rem)", alignItems: "center" };
 
 const FEATURES = [
-  ["cpu", "running", "Fits any GPU", "NVIDIA, AMD or Intel. CUDA or Vulkan is chosen for you, and llama.cpp sizes the context and GPU layers to your free VRAM."],
-  ["gamepad-2", "game", "Game detection that works", "Reads the records of a dozen-plus launchers and watches per-process GPU use, so it catches the games launchers miss."],
-  ["code-xml", "paused", "OpenAI-compatible API", "Point any OpenAI client, editor plugin or agent at http://127.0.0.1:8080/v1. Add an API key to share it on your network."],
-  ["app-window", "loading", "Lives in the tray", "A status icon, every setting in the right-click menu, and a click-through popup that never steals focus from your game."],
-  ["keyboard", "game", "Ctrl+Alt+L", "Turn the model on or off from anywhere, even full-screen."],
+  ["gpu", "running", "Fits any GPU", "NVIDIA, AMD or Intel. CUDA or Vulkan is chosen for you, and llama.cpp sizes the context and GPU layers to your free VRAM."],
+  ["eye", "game", "Game detection that works", "Reads the records of a dozen-plus launchers and watches per-process GPU use, so it catches the games launchers miss."],
+  ["api", "paused", "OpenAI-compatible API", "Point any OpenAI client, editor plugin or agent at http://127.0.0.1:8080/v1. Add an API key to share it on your network."],
+  ["tray", "loading", "Lives in the tray", "A status icon, every setting in the right-click menu, and a click-through popup that never steals focus from your game."],
+  ["key", "game", "Ctrl+Alt+L", "Turn the model on or off from anywhere, even full-screen."],
   ["box", "running", "Pick your model", "A catalog of Qwen 3.8 quants rated for your PC, downloaded in the background. Or drop in any .gguf of your own."],
-  ["battery-low", "loading", "Always on, low power", "No sleep, screen off after 10 minutes, PCIe/CPU/USB power saving and Wake-on-LAN. Uninstalling puts it all back."],
-  ["shield-check", "paused", "Signed updates", "Updates itself from GitHub releases, but only ones signed with the project key for that exact version."],
+  ["moon", "loading", "Always on, low power", "No sleep, screen off after 10 minutes, PCIe/CPU/USB power saving and Wake-on-LAN. Uninstalling puts it all back."],
+  ["shield", "paused", "Signed updates", "Updates itself from GitHub releases, but only ones signed with the project key for that exact version."],
 ];
 const LAUNCHERS = ["Steam", "Epic", "GOG", "EA", "Ubisoft", "Battle.net", "Riot", "Rockstar", "Xbox / Game Pass", "Heroic", "Humble", "HoYoPlay", "Meta / Oculus", "Emulators"];
 
@@ -77,7 +77,7 @@ function FinalCta() {
     <img src="../../assets/logo.svg" width="72" height="72" alt="" style={{ marginBottom: "1.25rem" }} />
     <h2 style={{ ...S.h2, fontSize: "var(--text-cta)" }}>Game on. <span style={{ color: "var(--accent)" }}>The llama will wait.</span></h2>
     <p style={{ ...lede, marginInline: "auto" }}>Download the exe, choose <i>Yes</i> to install, and it takes care of the rest.</p>
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "2rem", justifyContent: "center" }}><PillButton href={S.DL} icon={<Icon name="download" />}>Download for Windows</PillButton><PillButton variant="ghost" href="#">Installation guide</PillButton></div>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "2rem", justifyContent: "center" }}><PillButton href={S.DL} icon={<Icon name="windows" />}>Download for Windows</PillButton><PillButton variant="ghost" href="#">Installation guide</PillButton></div>
   </div></section>;
 }
 

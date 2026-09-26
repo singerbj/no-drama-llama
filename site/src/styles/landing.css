@@ -163,27 +163,9 @@ code {
 }
 
 .theme-toggle svg {
+  display: block;
   width: 18px;
   height: 18px;
-}
-
-/* Sun in dark mode (switches to light), moon in light mode. */
-.theme-toggle .moon,
-[data-theme='light'] .theme-toggle .sun {
-  display: none;
-}
-
-[data-theme='light'] .theme-toggle .moon {
-  display: block;
-}
-
-/* Lucide-style line icons */
-.i {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 /* ---------------------------------------------------------------- buttons: pills on the site */
@@ -212,6 +194,7 @@ code {
 }
 
 .btn svg {
+  display: block;
   width: 18px;
   height: 18px;
 }
@@ -565,15 +548,15 @@ code {
   margin: 0.8rem 0 0.35rem;
 }
 
-/* Feature icons: 28px line icons, stroke 1.8, tinted with a status tone. */
+/* Feature icons (design/assets/icons/): 28px, tinted with a status tone. */
 .icon {
+  color: var(--tone, var(--accent));
+}
+
+.icon svg {
+  display: block;
   width: 28px;
   height: 28px;
-  fill: none;
-  stroke: var(--tone, var(--accent));
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 .tone-running {

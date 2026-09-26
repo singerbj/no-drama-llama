@@ -1,6 +1,6 @@
 Pill CTA for the website and docs — "Download for Windows", "Read the docs →".
 ```jsx
-<PillButton href="#" icon={<Icon name="download" />}>Download for Windows</PillButton>
+<PillButton href="#" icon={<Icon name="windows" />}>Download for Windows</PillButton>
 <PillButton variant="ghost">Read the docs →</PillButton>
 <PillButton size="sm">Download</PillButton>
 ```

@@ -10,7 +10,7 @@ function Nav({ theme, setTheme }) {
       <a href="#" style={{ display: "flex", alignItems: "center", gap: "0.6rem", fontWeight: 700, color: "var(--text)", textDecoration: "none", whiteSpace: "nowrap", fontFamily: "var(--font-display)", fontSize: 15 }}><img src="../../assets/logo.svg" width="32" height="32" alt="" />No Drama Llama</a>
       <nav style={{ display: "flex", alignItems: "center", gap: "1.25rem", fontSize: "0.95rem" }}>
         <a style={link} href="#">Docs</a><a style={link} href="#api">API</a><a style={link} href="https://github.com/singerbj/no-drama-llama">GitHub</a>
-        <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme" style={{ display: "grid", placeItems: "center", width: 36, height: 36, border: "1px solid var(--border)", borderRadius: 999, background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}><Icon name={theme === "dark" ? "sun" : "moon"} size={18} /></button>
+        <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme" style={{ display: "grid", placeItems: "center", width: 36, height: 36, border: "1px solid var(--border)", borderRadius: 999, background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}><Icon name="theme" size={18} /></button>
         <PillButton size="sm" href={DL}>Download</PillButton>
       </nav>
     </div>
@@ -25,7 +25,7 @@ function Hero() {
         <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 700, fontSize: "var(--text-h1)", lineHeight: 1.1, letterSpacing: "-0.035em", textWrap: "balance" }}>Your gaming PC is an AI server. <span style={{ display: "block", color: "var(--accent)" }}>It just knows when to step aside.</span></h1>
         <p style={{ fontSize: "1.2rem", color: "var(--text-muted)", marginTop: "1.25rem", maxWidth: "34em", textWrap: "pretty" }}>No Drama Llama runs a local LLM on your GPU around the clock. The moment a game starts, it stops the model and hands the game all of your VRAM. Quit, and it’s back.</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "2rem" }}>
-          <PillButton href={DL} icon={<Icon name="download" />}>Download for Windows</PillButton>
+          <PillButton href={DL} icon={<Icon name="windows" />}>Download for Windows</PillButton>
           <PillButton variant="ghost" href="#">Read the docs →</PillButton>
         </div>
         <p style={{ marginTop: "1rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>One exe · installs in minutes · uninstall restores every setting</p>
