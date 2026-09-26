@@ -66,7 +66,15 @@ pub fn run() -> i32 {
         .manage(Latest::default())
         .invoke_handler(tauri::generate_handler![send, state])
         .setup(|app| {
-            WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
+            let mut builder =
+                WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()));
+            if sys::is_elevated() {
+                // WebView2's profile defaults to %LOCALAPPDATA%, which unelevated programs can
+                // write to (and so plant scripts or preferences in the elevated window).
+                builder =
+                    builder.data_directory(crate::paths::Paths::system().data_dir.join("webview2"));
+            }
+            builder
                 .title(APP_NAME)
                 .inner_size(860.0, 780.0)
                 .min_inner_size(600.0, 480.0)

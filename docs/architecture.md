@@ -202,7 +202,8 @@ C:\LLM\                 Administrators + SYSTEM: full, Users: read (inheritance 
    signature** against the public key baked in at build time (`NDL_UPDATE_PUBKEY`). The
    signature's trusted comment must be exactly `no-drama-llama <that version>`, so a validly
    signed old build can't be passed off under a newer tag.
-4. It swaps the running exe (`self-replace`), updates the Apps & features version, and relaunches
+4. It swaps the running exe inside the admin-only install folder (running exe renamed to
+   `.old`, deleted at the next start), updates the Apps & features version, and relaunches
    with `run --after-update <old>`. The new instance waits for the single-instance mutex and
    takes over the still-running `llama-server` without reloading it.
 
@@ -220,7 +221,7 @@ The PowerShell edition worked, but it was a poor way to ship the app to other pe
 Rust was chosen over C# because:
 - It builds to a single static exe of a few MB that uses little memory and needs no runtime.
 - Mature crates cover the platform plumbing: `tray-icon` + `muda`, `global-hotkey`, Microsoft's
-  `windows` crate, `sysinfo`, `winreg`, `steamlocate`, `ureq` with SChannel TLS, `self-replace`,
+  `windows` crate, `sysinfo`, `winreg`, `steamlocate`, `ureq` with SChannel TLS,
   and `minisign-verify`.
 - Porting to Linux/SteamOS later is feasible.
 

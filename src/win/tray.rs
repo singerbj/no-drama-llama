@@ -791,6 +791,7 @@ pub fn run(p: Paths, after_update: Option<String>) -> i32 {
     let _ = std::fs::create_dir_all(&p.data_dir);
     log::init(&p.log);
     log!("tray started (v{})", env!("CARGO_PKG_VERSION"));
+    super::updater::remove_leftovers();
     lock_if_auto_signed_in_at_boot();
 
     let (tx_cmd, rx_cmd) = mpsc::channel::<Cmd>();

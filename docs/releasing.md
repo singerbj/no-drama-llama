@@ -12,10 +12,18 @@ releases still publish, but the app can only tell users that a new version exist
    minisign -G -W -p minisign.pub -s minisign.key
    ```
 
-2. In the repository settings, go to **Secrets and variables → Actions**:
-   - **Variables** → `UPDATE_PUBKEY`: the second line of `minisign.pub` (the base64 key).
-   - **Secrets** → `UPDATE_SIGNING_KEY`: the full contents of `minisign.key`.
-3. Store `minisign.key` offline somewhere safe, then delete the local copy.
+2. In the repository settings, go to **Secrets and variables → Actions** → **Variables** and
+   add `UPDATE_PUBKEY`: the second line of `minisign.pub` (the base64 key).
+3. Go to **Environments**, create an environment named `release`, and configure it:
+   - **Deployment branches and tags** → *Selected branches and tags* → add the tag rule `v*`.
+   - **Required reviewers** → yourself (so every signed release needs a click to approve).
+   - **Environment secrets** → `UPDATE_SIGNING_KEY`: the full contents of `minisign.key`.
+
+   Keep the key off the repository-level secrets: those are readable by a workflow on any
+   pushed branch, while an environment secret only reaches the approved `publish` job.
+4. Under **Rules → Rulesets**, add a tag ruleset for `v*` that restricts creation, update and
+   deletion to administrators.
+5. Store `minisign.key` offline somewhere safe, then delete the local copy.
 
 The public key is compiled into every release build. If you rotate it, the next release must
 still be signed with the old key, because installed apps only trust the key they were built
@@ -32,10 +40,10 @@ with.
    ```
 
 The **Release** workflow then:
-1. checks that the tag matches the crate version
+1. checks that the tagged commit is on `main` and that the tag matches the crate version
 2. runs the tests
 3. builds the exe with the public key baked in
-4. signs it with trusted comment `no-drama-llama <version>`, verifies the signature, and writes
+4. waits for approval on the `release` environment, then signs it with trusted comment `no-drama-llama <version>`, verifies the signature, and writes
    `SHA256SUMS`
 5. publishes the release
 

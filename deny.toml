@@ -6,3 +6,8 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 [advisories]
 # Flag unmaintained crates we depend on directly; transitive ones are the upstream's call.
 unmaintained = "workspace"
+
+[sources]
+# Only crates.io: no git dependencies or other registries can slip into the lockfile.
+unknown-registry = "deny"
+unknown-git = "deny"

@@ -9,16 +9,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn nvidia_smi() -> Option<PathBuf> {
-    let sys32 =
-        PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into()))
-            .join(r"System32\nvidia-smi.exe");
+    // From the APIs, not %SystemRoot% / %ProgramFiles%, which the user's environment can change.
+    let sys32 = sys::system32().join("nvidia-smi.exe");
     if sys32.exists() {
         return Some(sys32);
     }
-    let pf = PathBuf::from(
-        std::env::var_os("ProgramFiles").unwrap_or_else(|| r"C:\Program Files".into()),
-    )
-    .join(r"NVIDIA Corporation\NVSMI\nvidia-smi.exe");
+    let pf = sys::program_files().join(r"NVIDIA Corporation\NVSMI\nvidia-smi.exe");
     pf.exists().then_some(pf)
 }
 

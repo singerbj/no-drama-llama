@@ -4,6 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Let a freshly published (possibly compromised) version age before it's proposed.
+    cooldown:
+      default-days: 7
     groups:
       rust-deps:
         patterns: ["*"]
@@ -11,10 +14,25 @@ updates:
     directory: /ui
     schedule:
       interval: weekly
+    # Let a freshly published (possibly compromised) version age before it's proposed.
+    cooldown:
+      default-days: 7
     groups:
       ui-deps:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      site-deps:
         patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    # Let a freshly published (possibly compromised) version age before it's proposed.
+    cooldown:
+      default-days: 7

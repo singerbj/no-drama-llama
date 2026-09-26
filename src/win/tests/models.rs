@@ -20,13 +20,24 @@ fn downloads_a_single_file_model() {
     let fake = hf::start(vec![file(m.repo, &m.files[0], data.clone())]);
     let (_t, dir) = long_tempdir();
     let mut last = (0, 0);
-    models::download_model(&fake.base, &m, &dir, |d, t| last = (d, t), None).unwrap();
+    models::download_model(
+        &fake.base,
+        &m,
+        &dir,
+        &dir.join(".dl"),
+        |d, t| last = (d, t),
+        None,
+    )
+    .unwrap();
     assert_eq!(std::fs::read(dir.join(m.primary_file())).unwrap(), data);
     assert_eq!(last, (300_000, 300_000));
-    assert!(!dir.join(format!("{}.part", m.primary_file())).exists());
+    assert!(!dir
+        .join(".dl")
+        .join(format!("{}.part", m.primary_file()))
+        .exists());
     // already there: not downloaded again
     let before = fake.downloads.lock().unwrap().len();
-    models::download_model(&fake.base, &m, &dir, |_, _| {}, None).unwrap();
+    models::download_model(&fake.base, &m, &dir, &dir.join(".dl"), |_, _| {}, None).unwrap();
     assert_eq!(fake.downloads.lock().unwrap().len(), before);
 }
 
@@ -43,7 +54,15 @@ fn downloads_every_part_of_a_split_model() {
     let fake = hf::start(files);
     let (_t, dir) = long_tempdir();
     let mut progress = Vec::new();
-    models::download_model(&fake.base, &m, &dir, |d, t| progress.push((d, t)), None).unwrap();
+    models::download_model(
+        &fake.base,
+        &m,
+        &dir,
+        &dir.join(".dl"),
+        |d, t| progress.push((d, t)),
+        None,
+    )
+    .unwrap();
     for (name, data) in m.local_files().iter().zip(&expected) {
         assert_eq!(&std::fs::read(dir.join(name)).unwrap(), data, "{name}");
     }
@@ -80,10 +99,14 @@ fn bad_checksum_deletes_the_file() {
     f.sha = Some("0".repeat(64));
     let fake = hf::start(vec![f]);
     let (_t, dir) = long_tempdir();
-    let e = models::download_model(&fake.base, &m, &dir, |_, _| {}, None).unwrap_err();
+    let e = models::download_model(&fake.base, &m, &dir, &dir.join(".dl"), |_, _| {}, None)
+        .unwrap_err();
     assert!(format!("{e:#}").contains("checksum"), "{e:#}");
     assert!(!dir.join(m.primary_file()).exists());
-    assert!(!dir.join(format!("{}.part", m.primary_file())).exists());
+    assert!(!dir
+        .join(".dl")
+        .join(format!("{}.part", m.primary_file()))
+        .exists());
 }
 
 #[test]
@@ -93,16 +116,24 @@ fn cancel_keeps_the_partial_file_and_resume_finishes_it() {
     let fake = hf::start(vec![file(m.repo, &m.files[0], data.clone())]);
     let (_t, dir) = long_tempdir();
     let cancel = AtomicBool::new(true);
-    let e = models::download_model(&fake.base, &m, &dir, |_, _| {}, Some(&cancel)).unwrap_err();
+    let e = models::download_model(
+        &fake.base,
+        &m,
+        &dir,
+        &dir.join(".dl"),
+        |_, _| {},
+        Some(&cancel),
+    )
+    .unwrap_err();
     assert_eq!(e.to_string(), super::super::net::CANCELLED);
     assert!(!dir.join(m.primary_file()).exists());
     // simulate a partial download, then resume
     std::fs::write(
-        dir.join(format!("{}.part", m.primary_file())),
+        dir.join(".dl").join(format!("{}.part", m.primary_file())),
         &data[..3_000_000],
     )
     .unwrap();
-    models::download_model(&fake.base, &m, &dir, |_, _| {}, None).unwrap();
+    models::download_model(&fake.base, &m, &dir, &dir.join(".dl"), |_, _| {}, None).unwrap();
     assert_eq!(std::fs::read(dir.join(m.primary_file())).unwrap(), data);
 }
 
@@ -111,7 +142,8 @@ fn missing_file_on_the_server_fails_cleanly() {
     let m = catalog::find("qwen3.8-27b:UD-IQ2_XXS").unwrap();
     let fake = hf::start(vec![]);
     let (_t, dir) = long_tempdir();
-    let e = models::download_model(&fake.base, &m, &dir, |_, _| {}, None).unwrap_err();
+    let e = models::download_model(&fake.base, &m, &dir, &dir.join(".dl"), |_, _| {}, None)
+        .unwrap_err();
     assert!(format!("{e:#}").contains("not found"), "{e:#}");
 }
 

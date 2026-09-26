@@ -35,6 +35,38 @@ All notable changes to this project are documented here. The format follows
   120 s limit was a total budget for the whole body; it now applies only when no data arrives for
   120 s.
 
+### Security
+- **Self-update no longer runs a copy of the app from `%TEMP%`.** The update used to move the
+  old exe to the user's temp folder and start an elevated helper copy there, where unelevated
+  programs could plant DLLs or a fake `cmd.exe` and have them run as administrator. The swap
+  now happens inside the admin-only install folder, and leftovers are removed at the next start.
+- **`C:\LLM` can't be taken over by another account.** Any user can create folders in `C:\`,
+  and whoever creates one stays its owner, able to change its permissions. The installer now
+  creates `C:\LLM` admin-only from the start, gives an existing one to Administrators and
+  replaces its whole permission list, refuses a `C:\LLM` (or `llama\`, `models\`, `data\`,
+  `ollaya\`) that is a link, and downloads llama.cpp and Ollaya again if the folder had another
+  owner.
+- **Model downloads no longer write inside the user-writable `models\` folder while in
+  progress.** Partial files now live in the admin-only `C:\LLM\data\model-downloads\` and only
+  a verified file is moved into `models\`. Before, a link in `models\` could make the elevated
+  app append to or delete any file on the PC.
+- **Elevated programs no longer inherit the user's environment.** The app drops variables that
+  make programs load code or change what they run (`COR_*`, `DOTNET_*`, `WEBVIEW2_*`,
+  `LLAMA_*`, `GGML_*`, `OLLAYA_*`, `PSModulePath`...), rebuilds `PATH` from the machine-wide
+  value, and runs Windows tools (`schtasks`, `icacls`, `powercfg`, `powershell`, `cmd`) by
+  their full System32 path, never by name next to the exe (for example in Downloads).
+  Program Files and System32 come from Windows APIs instead of environment variables.
+- The settings window keeps its WebView2 profile in the admin-only `C:\LLM\data\webview2\`
+  instead of `%LOCALAPPDATA%`.
+- Start menu shortcuts are never created or deleted through a link.
+- A llama.cpp download without a published SHA-256 is refused, and https downloads never
+  follow a redirect to plain http.
+- Release pipeline: every GitHub Action is pinned to a commit, checkouts don't keep
+  credentials, cargo runs with `--locked`, the release build uses no npm cache or install
+  scripts, a release must be tagged on `main`, and the signing key lives on a `release`
+  environment (see `docs/releasing.md`). cargo-deny also rejects crates from git or other
+  registries, and Dependabot waits 7 days before proposing a new version.
+
 ## [2.0.0]
 
 A single self-installing app, written in Rust, replaces the PowerShell scripts. It keeps the
