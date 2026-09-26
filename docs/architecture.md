@@ -17,9 +17,12 @@ edition are migrated automatically.
 | `catalog.rs` | any | Downloadable models, how well each fits this PC, the recommendation |
 | `setup.rs` | any | Install/uninstall logic: task XML, settings backup and restore, `powercfg` parsing, PowerShell-edition migration |
 | `cli.rs` | any | Command-line parsing |
+| `control.rs` | any | Messages between the tray and the settings window |
 | `win/tray.rs` | Windows | UI thread: tray icon and menu, Ctrl+Alt+L hotkey, popups |
 | `win/worker.rs` | Windows | Worker thread: polls every 5 s, runs detection, the state machine, `llama-server` and updates |
 | `win/osd.rs` | Windows | Layered, click-through, never-focused popup window (GDI) |
+| `win/settings_host.rs` | Windows | Tray side of the settings window: starts it, sends it state, receives its requests |
+| `win/settings_app.rs` | Windows | The settings window itself: a Tauri app (`settings-window`) that shows `ui/` |
 | `win/gpu.rs` | Windows | Per-process GPU counters (PDH), full-screen check |
 | `win/libraries.rs` | Windows | Reads each launcher's records to find game folders |
 | `win/procs.rs` | Windows | Process list and exe paths (sysinfo) |
@@ -44,6 +47,39 @@ The Windows modules gather inputs and carry out actions.
 ```
 
 The UI thread never blocks, so the menu stays responsive while a model loads.
+
+## Settings window
+
+The settings window is a separate process running the same exe (`no-drama-llama.exe
+settings-window`), so the tray app itself never loads a webview. It's built with Tauri 2 and
+WebView2, and its page (`ui/`, TypeScript and Vite, about 20 KB) is compiled into the exe.
+
+```
+ tray (UI thread)                         settings window (Tauri)            page (ui/)
+ ────────────────                         ───────────────────────            ──────────
+ settings_host  ── Event (JSON line) ──►  stdin  ── "state" event ────────►  renders
+   state every tick, Saved, Focus
+                ◄─ Request (JSON line) ─  stdout ◄─ send command ─────────  buttons, Save
+ → the same actions as the menu (Cmd to the worker)
+```
+
+- The tray starts the window with its stdin and stdout piped. Nothing listens on a port or a
+  named pipe, so no other program can drive the elevated app through it. When the tray exits,
+  the window's stdin closes and the window closes too.
+- The window inherits the tray's elevation. It loads only its own bundled page under a strict
+  CSP, and its capability allows only event listening plus its two commands.
+- The tray parses every request (`control::Request`) and runs it as the matching menu action.
+  *Save* sends only the changed settings. `Settings::with_patch` applies each valid value and
+  reports the invalid ones, which keep their current value.
+- A test checks that every `settings.json` key has a field in `ui/index.html`.
+
+## Start with Windows
+
+`StartWithWindows` (default `true`) turns the logon task's trigger on or off. The task itself
+stays enabled, so the Start menu entry can still start the app without a UAC prompt. The worker
+applies the setting at startup and whenever settings change, including hand edits. Older
+versions disabled the whole task from the menu; when `settings.json` has no `StartWithWindows`
+yet, the setting takes the task's current state so that choice is kept.
 
 ## State machine (`state.rs`)
 

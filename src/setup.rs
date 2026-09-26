@@ -150,8 +150,9 @@ pub fn xml_escape(s: &str) -> String {
 }
 
 /// Scheduled task: starts the app elevated at logon without a UAC prompt, restarts it if it
-/// crashes, never times out, and runs on battery too.
-pub fn task_xml(exe: &Path, user_sid: &str) -> String {
+/// crashes, never times out, and runs on battery too. `at_logon` = false keeps the task (the
+/// Start menu entry runs it) but turns off its logon trigger.
+pub fn task_xml(exe: &Path, user_sid: &str, at_logon: bool) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -160,7 +161,7 @@ pub fn task_xml(exe: &Path, user_sid: &str) -> String {
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
-      <Enabled>true</Enabled>
+      <Enabled>{at_logon}</Enabled>
       <UserId>{sid}</UserId>
     </LogonTrigger>
   </Triggers>
@@ -198,6 +199,7 @@ pub fn task_xml(exe: &Path, user_sid: &str) -> String {
 </Task>
 "#,
         sid = xml_escape(user_sid),
+        at_logon = at_logon,
         cmd = xml_escape(&exe.to_string_lossy())
     )
 }
@@ -208,6 +210,35 @@ pub fn task_state_is_enabled(state: &str) -> bool {
     matches!(
         state.trim().to_ascii_lowercase().as_str(),
         "ready" | "running" | "queued"
+    )
+}
+
+/// PowerShell that prints `<task state>|<enabled trigger count>` for the logon task.
+pub fn logon_start_query_ps(task: &str) -> String {
+    format!(
+        "$t = Get-ScheduledTask -TaskName {} -ErrorAction Stop; \
+         '{{0}}|{{1}}' -f $t.State, @($t.Triggers | Where-Object {{ $_.Enabled }}).Count",
+        ps_single_quote(task)
+    )
+}
+
+/// Output of [`logon_start_query_ps`] -> whether the app starts at logon. `None` = no such
+/// task (not installed) or unreadable output.
+pub fn parse_logon_start(out: &str) -> Option<bool> {
+    let (state, triggers) = out.trim().split_once('|')?;
+    let triggers: u32 = triggers.trim().parse().ok()?;
+    Some(task_state_is_enabled(state) && triggers > 0)
+}
+
+/// PowerShell that turns the logon task's trigger on or off. The task itself stays enabled
+/// either way (older versions disabled it), so the Start menu entry can still run it.
+pub fn set_logon_start_ps(task: &str, on: bool) -> String {
+    format!(
+        "$t = Get-ScheduledTask -TaskName {} -ErrorAction Stop; \
+         foreach ($tr in $t.Triggers) {{ $tr.Enabled = ${on} }}; \
+         $t.Settings.Enabled = $true; \
+         Set-ScheduledTask -InputObject $t -ErrorAction Stop | Out-Null",
+        ps_single_quote(task)
     )
 }
 
@@ -451,6 +482,7 @@ mod tests {
         let x = task_xml(
             Path::new(r"C:\Program Files\No Drama Llama\no-drama-llama.exe"),
             "S-1-5-21-1-2-3-1001",
+            true,
         );
         for needle in [
             "<RunLevel>HighestAvailable</RunLevel>",
@@ -465,6 +497,7 @@ mod tests {
         ] {
             assert!(x.contains(needle), "{needle}");
         }
+        assert!(x.contains("<LogonTrigger>\n      <Enabled>true</Enabled>"));
         // two occurrences of the user (trigger + principal)
         assert_eq!(x.matches("S-1-5-21-1-2-3-1001").count(), 2);
         // balanced tags
@@ -488,8 +521,21 @@ mod tests {
     }
 
     #[test]
+    fn task_xml_without_logon_start() {
+        let x = task_xml(Path::new(r"C:\app.exe"), "S-1", false);
+        assert!(
+            x.contains("<LogonTrigger>\n      <Enabled>false</Enabled>"),
+            "{x}"
+        );
+        // the task itself stays enabled so the Start menu entry can run it
+        assert!(x.contains(
+            "<AllowStartOnDemand>true</AllowStartOnDemand>\n    <Enabled>true</Enabled>"
+        ));
+    }
+
+    #[test]
     fn task_xml_escapes() {
-        let x = task_xml(Path::new(r"C:\A&B <x>\app.exe"), "S-1'\"");
+        let x = task_xml(Path::new(r"C:\A&B <x>\app.exe"), "S-1'\"", true);
         assert!(x.contains(r"<Command>C:\A&amp;B &lt;x&gt;\app.exe</Command>"));
         assert!(x.contains("<UserId>S-1&apos;&quot;</UserId>"));
         assert_eq!(xml_escape("&<>\"'"), "&amp;&lt;&gt;&quot;&apos;");
@@ -508,6 +554,47 @@ mod tests {
             "Get-ScheduledTask : No MSFT_ScheduledTask objects found",
         ] {
             assert!(!task_state_is_enabled(off), "{off:?}");
+        }
+    }
+
+    #[test]
+    fn logon_start_parsing() {
+        assert_eq!(parse_logon_start("Ready|1\r\n"), Some(true));
+        assert_eq!(parse_logon_start("Running|1"), Some(true));
+        assert_eq!(parse_logon_start("Ready|0"), Some(false), "trigger off");
+        assert_eq!(
+            parse_logon_start("Disabled|1"),
+            Some(false),
+            "task off (older toggle)"
+        );
+        for bad in [
+            "",
+            "\r\n",
+            "Ready",
+            "Ready|x",
+            "Get-ScheduledTask : No MSFT_ScheduledTask",
+        ] {
+            assert_eq!(parse_logon_start(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn logon_start_scripts() {
+        let q = logon_start_query_ps("No Drama Llama");
+        assert!(
+            q.contains("-TaskName 'No Drama Llama' -ErrorAction Stop"),
+            "{q}"
+        );
+        let on = set_logon_start_ps("No Drama Llama", true);
+        let off = set_logon_start_ps("It's", false);
+        assert!(on.contains("$tr.Enabled = $true"), "{on}");
+        assert!(off.contains("$tr.Enabled = $false"), "{off}");
+        assert!(off.contains("-TaskName 'It''s'"), "quotes escaped: {off}");
+        for s in [&on, &off] {
+            assert!(
+                s.contains("$t.Settings.Enabled = $true"),
+                "task stays runnable: {s}"
+            );
         }
     }
 

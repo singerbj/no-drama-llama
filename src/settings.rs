@@ -126,6 +126,8 @@ pub struct Settings {
     pub resume_after_sec: u32,
     pub gpu_ignore: Vec<String>,
     pub auto_update: bool,
+    /// Start the app when you sign in to Windows (the logon task's trigger).
+    pub start_with_windows: bool,
 }
 
 impl Default for Settings {
@@ -149,6 +151,7 @@ impl Default for Settings {
             resume_after_sec: 60,
             gpu_ignore: Vec::new(),
             auto_update: true,
+            start_with_windows: true,
         }
     }
 }
@@ -164,7 +167,7 @@ pub fn server_changed(a: &Settings, b: &Settings) -> bool {
 }
 
 /// Every key in settings.json, as written.
-pub const KEYS: [&str; 18] = [
+pub const KEYS: [&str; 19] = [
     "Model",
     "Reasoning",
     "Context",
@@ -183,6 +186,7 @@ pub const KEYS: [&str; 18] = [
     "ResumeAfterSec",
     "GpuIgnore",
     "AutoUpdate",
+    "StartWithWindows",
 ];
 
 /// `Context` value meaning "as much as fits" (llama.cpp's --fit picks it).
@@ -312,6 +316,7 @@ impl Settings {
                 "UseWindowsGameList" => v.as_bool().map(|b| s.use_windows_game_list = b).is_some(),
                 "Popups" => v.as_bool().map(|b| s.popups = b).is_some(),
                 "AutoUpdate" => v.as_bool().map(|b| s.auto_update = b).is_some(),
+                "StartWithWindows" => v.as_bool().map(|b| s.start_with_windows = b).is_some(),
                 "PopupPosition" => v
                     .as_str()
                     .and_then(PopupPosition::parse)
@@ -345,6 +350,40 @@ impl Settings {
             }
         }
         (s, warnings)
+    }
+
+    /// These settings with `patch` (settings.json keys -> values) applied, as the settings
+    /// window sends it. An invalid or unknown value leaves that setting as it was and is
+    /// reported.
+    pub fn with_patch(&self, patch: &Map<String, Value>) -> (Settings, Vec<String>) {
+        let Ok(Value::Object(mut merged)) = serde_json::to_value(self) else {
+            unreachable!("settings serialize to an object")
+        };
+        let mut warnings = Vec::new();
+        for (key, v) in patch {
+            let Some(canonical) = KEYS.iter().find(|k| k.eq_ignore_ascii_case(key)) else {
+                warnings.push(format!("unknown setting {key}"));
+                continue;
+            };
+            let one = Value::Object(Map::from_iter([(canonical.to_string(), v.clone())]));
+            if Settings::from_json(&one.to_string()).1.is_empty() {
+                merged.insert(canonical.to_string(), v.clone());
+            } else {
+                warnings.push(format!("invalid {canonical} {v} - not changed"));
+            }
+        }
+        (
+            Settings::from_json(&Value::Object(merged).to_string()).0,
+            warnings,
+        )
+    }
+
+    /// Whether settings JSON sets `key` at all (case-insensitively, like the parser).
+    pub fn json_has_key(text: &str, key: &str) -> bool {
+        matches!(
+            serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')),
+            Ok(Value::Object(m)) if m.keys().any(|k| k.eq_ignore_ascii_case(key))
+        )
     }
 
     pub fn load(path: &Path) -> (Settings, Vec<String>) {
@@ -468,6 +507,63 @@ mod tests {
         let (s, w) = Settings::load(Path::new("/definitely/not/here.json"));
         assert_eq!(s, Settings::default());
         assert!(w.is_empty());
+    }
+
+    #[test]
+    fn patch_applies_valid_values_and_keeps_the_rest() {
+        let base = Settings {
+            port: 9000,
+            gpu_ignore: vec!["a".into()],
+            ..Default::default()
+        };
+        let patch = serde_json::json!({
+            "StartWithWindows": false,
+            "context": 16384,
+            "GpuIgnore": ["a", "b"],
+            "Port": 80,
+            "Model": "..\\evil.gguf",
+            "Bogus": 1
+        });
+        let (s, w) = base.with_patch(patch.as_object().unwrap());
+        assert!(!s.start_with_windows);
+        assert_eq!(s.context, 16384);
+        assert_eq!(s.gpu_ignore, vec!["a", "b"]);
+        assert_eq!(
+            s.port, 9000,
+            "invalid value keeps the current one, not the default"
+        );
+        assert_eq!(s.model, DEFAULT_MODEL);
+        assert_eq!(w.len(), 3, "{w:?}");
+        assert!(w.iter().any(|x| x.contains("Port")));
+        assert!(w.iter().any(|x| x.contains("Model")));
+        assert!(w.iter().any(|x| x.contains("unknown setting Bogus")));
+    }
+
+    #[test]
+    fn empty_patch_changes_nothing() {
+        let base = Settings {
+            context: 4096,
+            listen_host: "0.0.0.0".into(),
+            ..Default::default()
+        };
+        let (s, w) = base.with_patch(&Map::new());
+        assert_eq!(s, base);
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn detects_keys_in_the_file() {
+        assert!(Settings::json_has_key(
+            r#"{"StartWithWindows":true}"#,
+            "StartWithWindows"
+        ));
+        assert!(Settings::json_has_key(
+            "\u{feff}{\"startwithwindows\":1}",
+            "StartWithWindows"
+        ));
+        for t in ["{}", r#"{"Model":"x.gguf"}"#, "not json", "[]", ""] {
+            assert!(!Settings::json_has_key(t, "StartWithWindows"), "{t}");
+        }
     }
 
     #[test]
@@ -767,6 +863,7 @@ mod more_tests {
             resume_after_sec: 5,
             gpu_ignore: vec!["i".into()],
             auto_update: false,
+            start_with_windows: false,
         };
         let (back, w) = Settings::from_json(&custom.to_json());
         assert!(w.is_empty(), "{w:?}");
@@ -792,6 +889,7 @@ mod more_tests {
                 && d.use_windows_game_list
                 && d.popups
                 && d.auto_update
+                && d.start_with_windows
         );
         assert!(d.api_key.is_empty() && d.extra_games.is_empty() && d.gpu_ignore.is_empty());
         assert_eq!(serde_json::to_value(d.reasoning).unwrap(), "low");
@@ -890,6 +988,27 @@ mod more_tests {
                 let (again, w) = Settings::from_json(&s.to_json());
                 prop_assert!(w.is_empty(), "{:?}", w);
                 prop_assert_eq!(again, s);
+            }
+
+            /// A patch from the settings window can only ever produce valid settings, and it
+            /// never touches a setting it doesn't name.
+            #[test]
+            fn any_patch_yields_valid_settings(
+                entries in prop::collection::vec((prop::sample::select(KEYS.to_vec()), json_value()), 0..6)
+            ) {
+                let base = Settings { port: 9123, context: 4096, ..Default::default() };
+                let patch: serde_json::Map<String, serde_json::Value> =
+                    entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+                let (s, _) = base.with_patch(&patch);
+                let (again, w) = Settings::from_json(&s.to_json());
+                prop_assert!(w.is_empty(), "{:?}", w);
+                prop_assert_eq!(&again, &s);
+                if !patch.contains_key("Port") {
+                    prop_assert_eq!(s.port, 9123);
+                }
+                if !patch.contains_key("Context") {
+                    prop_assert_eq!(s.context, 4096);
+                }
             }
 
             #[test]

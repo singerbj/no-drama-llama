@@ -29,6 +29,14 @@ jobs:
           components: clippy, rustfmt
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build the settings window's frontend
+        working-directory: ui
+        run: npm ci && npm run build
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings
@@ -48,6 +56,14 @@ jobs:
         with:
           toolchain: "1.98"
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build the settings window's frontend
+        working-directory: ui
+        run: npm ci && npm run build
       - name: Build test helpers (fake llama-server)
         run: cargo build --examples
       - name: Test
@@ -65,6 +81,14 @@ jobs:
         with:
           toolchain: "1.98"
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build the settings window's frontend
+        working-directory: ui
+        run: npm ci && npm run build
       - run: cargo build --release --locked
       - name: Smoke test the release binary
         shell: pwsh

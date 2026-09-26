@@ -21,6 +21,8 @@ sha2 = "0.11"
 global-hotkey = "0.8"
 self-replace = "1"
 steamlocate = "2"
+# Settings window. custom-protocol: always serve the bundled UI (we build with plain cargo).
+tauri = { version = "2.11", default-features = false, features = ["wry", "compression", "custom-protocol"] }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tray-icon = "0.25"
 ureq = { version = "3", default-features = false, features = ["native-tls"] }
@@ -42,6 +44,9 @@ windows = { version = "0.62", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
 
 [dev-dependencies]
 proptest = "1"

@@ -1,0 +1,19 @@
+{
+  "name": "no-drama-llama-settings",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The settings window's frontend (served by Tauri from ui/dist)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  }
+}
