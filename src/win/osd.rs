@@ -5,13 +5,15 @@
 use crate::settings::PopupPosition;
 use crate::state::Tone;
 use std::cell::RefCell;
+use std::sync::OnceLock;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontW, CreatePen, CreateRoundRectRgn, CreateSolidBrush, DeleteObject,
-    Ellipse, EndPaint, FillRect, GetDC, GetStockObject, GetTextExtentPoint32W, ReleaseDC,
-    RoundRect, SelectObject, SetBkMode, SetTextColor, SetWindowRgn, TextOutW, CLEARTYPE_QUALITY,
-    CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, HFONT, HGDIOBJ, NULL_BRUSH, NULL_PEN, OUT_DEFAULT_PRECIS,
+    AddFontMemResourceEx, BeginPaint, CreateFontW, CreatePen, CreateRoundRectRgn, CreateSolidBrush,
+    DeleteObject, Ellipse, EndPaint, FillRect, GetDC, GetGlyphIndicesW, GetStockObject,
+    GetTextExtentPoint32W, GetTextFaceW, ReleaseDC, RoundRect, SelectObject, SetBkMode,
+    SetTextColor, SetWindowRgn, TextOutW, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET,
+    GGI_MARK_NONEXISTING_GLYPHS, HFONT, HGDIOBJ, NULL_BRUSH, NULL_PEN, OUT_DEFAULT_PRECIS,
     PAINTSTRUCT, PS_SOLID, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -64,7 +66,38 @@ thread_local! {
     static REGISTERED: RefCell<bool> = const { RefCell::new(false) };
 }
 
-fn font(px: i32, weight: i32) -> HFONT {
+/// Google Sans Code, the design system's text face (design/), as static TrueType instances at
+/// the popup's two weights. scripts/osd-fonts.py builds them; the license is fonts/OFL.txt.
+const FONTS: [(&[u8], PCWSTR, i32); 2] = [
+    (
+        include_bytes!("fonts/GoogleSansCode-Regular.ttf"),
+        w!("Google Sans Code"),
+        400,
+    ),
+    (
+        include_bytes!("fonts/GoogleSansCode-SemiBold.ttf"),
+        w!("Google Sans Code SemiBold"),
+        600,
+    ),
+];
+
+/// Registers the popup's fonts for this process only: nothing is installed, and other apps can't
+/// see them. False if Windows refused them, and the popup uses Segoe UI.
+fn fonts_loaded() -> bool {
+    static LOADED: OnceLock<bool> = OnceLock::new();
+    *LOADED.get_or_init(|| {
+        FONTS.iter().all(|(data, _, _)| {
+            // Windows writes the number of fonts added here, although the binding says *const.
+            let mut count = 0u32;
+            let n = (&raw mut count).cast_const();
+            let h =
+                unsafe { AddFontMemResourceEx(data.as_ptr().cast(), data.len() as u32, None, n) };
+            !h.is_invalid() && count > 0
+        })
+    })
+}
+
+fn create_font(px: i32, weight: i32, face: PCWSTR) -> HFONT {
     unsafe {
         CreateFontW(
             -px,
@@ -80,9 +113,67 @@ fn font(px: i32, weight: i32) -> HFONT {
             CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY,
             0,
-            w!("Segoe UI"),
+            face,
         )
     }
+}
+
+/// The face GDI actually chose for `f`.
+pub(crate) fn face_name(f: HFONT) -> String {
+    let mut name = [0u16; 64];
+    unsafe {
+        let dc = GetDC(None);
+        let old = SelectObject(dc, HGDIOBJ(f.0));
+        GetTextFaceW(dc, Some(&mut name));
+        SelectObject(dc, old);
+        ReleaseDC(None, dc);
+    }
+    let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+    String::from_utf16_lossy(&name[..len])
+}
+
+/// Whether `f` really is `face` (GDI quietly substitutes another font for a missing one) and has
+/// a glyph for every character of `text`.
+fn covers(f: HFONT, face: PCWSTR, text: &[u16]) -> bool {
+    let wanted = String::from_utf16_lossy(unsafe { face.as_wide() });
+    if !face_name(f).eq_ignore_ascii_case(&wanted) {
+        return false;
+    }
+    if text.is_empty() {
+        return true;
+    }
+    let mut glyphs = vec![0u16; text.len()];
+    unsafe {
+        let dc = GetDC(None);
+        let old = SelectObject(dc, HGDIOBJ(f.0));
+        let n = GetGlyphIndicesW(
+            dc,
+            PCWSTR(text.as_ptr()),
+            text.len() as i32,
+            glyphs.as_mut_ptr(),
+            GGI_MARK_NONEXISTING_GLYPHS,
+        );
+        SelectObject(dc, old);
+        ReleaseDC(None, dc);
+        n != u32::MAX && !glyphs.contains(&0xFFFF)
+    }
+}
+
+/// The design system's font for `text` at `weight` (400 or 600). Text it can't show (another
+/// script, emoji) gets Segoe UI, which Windows links to fallback fonts.
+pub(crate) fn font(px: i32, weight: i32, text: &[u16]) -> HFONT {
+    if fonts_loaded() {
+        if let Some(&(_, face, _)) = FONTS.iter().find(|(_, _, w)| *w == weight) {
+            let f = create_font(px, weight, face);
+            if covers(f, face, text) {
+                return f;
+            }
+            unsafe {
+                let _ = DeleteObject(HGDIOBJ(f.0));
+            }
+        }
+    }
+    create_font(px, weight, w!("Segoe UI"))
 }
 
 fn text_size(f: HFONT, text: &[u16]) -> SIZE {
@@ -118,10 +209,10 @@ pub fn show(title: &str, subtitle: &str, tone: Tone, position: PopupPosition) {
 
         let scale = GetDpiForSystem() as f32 / 96.0;
         let s = |px: i32| (px as f32 * scale).round() as i32;
-        let title_font = font(s(18), 600);
-        let sub_font = font(s(14), 400);
         let tw: Vec<u16> = title.encode_utf16().collect();
         let sw: Vec<u16> = subtitle.encode_utf16().collect();
+        let title_font = font(s(18), 600, &tw);
+        let sub_font = font(s(14), 400, &sw);
         let (t, st) = (text_size(title_font, &tw), text_size(sub_font, &sw));
         let (pad, dot, gap) = (s(18), s(12), s(12));
         let w = (pad + dot + gap + t.cx.max(st.cx) + pad).max(s(300));

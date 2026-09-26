@@ -36,7 +36,8 @@ All notable changes to this project are documented here. The format follows
   it: dark first with a light theme, Google Sans Code for text and Unbounded for headings, warm
   "llama wool" neutrals and brighter status colors (mint, marigold, sky, pebble, tomato) that the
   tray icon and on-screen popup use too. The logo's circle is mint, and the popup lost its side
-  stripe.
+  stripe. The popup is set in Google Sans Code, embedded in the exe and loaded for the app only
+  (nothing is installed); text in other scripts falls back to Segoe UI.
 
 ### Fixed
 - Model and llama.cpp downloads no longer fail with "download interrupted" after two minutes. The
