@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 13fe1adf28a86a20b43aa114430def606899e93f0fd2343aa77d7478da34b01f # shrinks to entries = [("GpuVramGB", Number(7.391067056649577e-25))]

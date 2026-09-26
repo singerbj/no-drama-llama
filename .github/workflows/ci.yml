@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust-lint:
+    name: Rust lint (fmt + clippy, Linux and Windows targets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
+          components: clippy, rustfmt
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+
+  rust-test:
+    name: Rust tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux runs the platform-independent logic; Windows also runs the Win32, process,
+        # HTTP and end-to-end worker tests.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
+      - uses: Swatinem/rust-cache@v2
+      - name: Build test helpers (fake llama-server)
+        run: cargo build --examples
+      - name: Test
+        run: cargo test --all-features -- --include-ignored
+        env:
+          PROPTEST_CASES: "1000"
+
+  rust-build:
+    name: Build Windows exe
+    runs-on: windows-latest
+    needs: [rust-lint]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Smoke test the release binary
+        shell: pwsh
+        run: |
+          # GUI-subsystem exe: use Start-Process -Wait to get reliable exit codes.
+          function Run($a) { (Start-Process target/release/no-drama-llama.exe -ArgumentList $a -Wait -PassThru -NoNewWindow).ExitCode }
+          if ((Run 'version') -ne 0) { throw 'version failed' }
+          if ((Run '--help') -ne 0) { throw '--help failed' }
+          if ((Run 'bogus-command') -ne 2) { throw 'a bad command must exit with 2' }
+          if ((Run 'install --llama-cpp-tag') -ne 2) { throw 'a bad option must exit with 2' }
+          $size = (Get-Item target/release/no-drama-llama.exe).Length / 1MB
+          "Release exe: {0:N1} MB" -f $size
+      - uses: actions/upload-artifact@v4
+        with:
+          name: no-drama-llama-exe
+          path: target/release/no-drama-llama.exe
+
+  rust-audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: Cargo.toml
+          command: check advisories
