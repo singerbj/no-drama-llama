@@ -1,8 +1,10 @@
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 // Tauri serves ui/dist from the exe (see tauri.conf.json). `npm run dev` opens the page in a
 // browser with sample data (src/mock.ts) for working on the layout.
 export default defineConfig({
+  plugins: [react()],
   base: "./",
   clearScreen: false,
   server: { port: 5173, strictPort: true },

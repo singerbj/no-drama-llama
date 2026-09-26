@@ -39,7 +39,8 @@
 }
 
 html,
-body {
+body,
+#root {
   margin: 0;
   height: 100%;
 }
@@ -47,9 +48,13 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
+  user-select: none;
+}
+
+#root {
+  height: 100%;
   display: flex;
   flex-direction: column;
-  user-select: none;
 }
 
 input,
@@ -195,7 +200,7 @@ main {
   padding: 8px 24px 24px;
 }
 
-body.dirty main {
+main.dirty {
   padding-bottom: 80px;
 }
 
@@ -395,7 +400,7 @@ input.switch:checked::after {
   background: color-mix(in srgb, var(--paused) 12%, var(--panel));
 }
 
-.panel > .row {
+main section > .row {
   border-bottom: none;
 }
 

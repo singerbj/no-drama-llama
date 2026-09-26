@@ -258,13 +258,13 @@ mod tests {
     #[test]
     fn settings_window_covers_every_setting() {
         // A setting added to settings.rs must also get a field in the window and a type.
-        let html = include_str!("../ui/index.html");
+        let panels = include_str!("../ui/src/panels.tsx");
         let types = include_str!("../ui/src/types.ts");
         for k in crate::settings::KEYS {
             assert_eq!(
-                html.matches(&format!("data-key=\"{k}\"")).count(),
+                panels.matches(&format!("k=\"{k}\"")).count(),
                 1,
-                "ui/index.html needs one field with data-key=\"{k}\""
+                "ui/src/panels.tsx needs one field with k=\"{k}\""
             );
             assert!(
                 types.contains(&format!("\n  {k}: ")),

@@ -52,7 +52,8 @@ The UI thread never blocks, so the menu stays responsive while a model loads.
 
 The settings window is a separate process running the same exe (`no-drama-llama.exe
 settings-window`), so the tray app itself never loads a webview. It's built with Tauri 2 and
-WebView2, and its page (`ui/`, TypeScript and Vite, about 20 KB) is compiled into the exe.
+WebView2. Its page (`ui/`: React, TypeScript and Vite, about 75 KB gzipped) is compiled into the
+exe.
 
 ```
  tray (UI thread)                         settings window (Tauri)            page (ui/)
@@ -71,7 +72,10 @@ WebView2, and its page (`ui/`, TypeScript and Vite, about 20 KB) is compiled int
 - The tray parses every request (`control::Request`) and runs it as the matching menu action.
   *Save* sends only the changed settings. `Settings::with_patch` applies each valid value and
   reports the invalid ones, which keep their current value.
-- A test checks that every `settings.json` key has a field in `ui/index.html`.
+- Every `settings.json` key has exactly one field in `ui/src/panels.tsx` (`k="Key"`), and a test
+  checks that. The field components in `ui/src/fields.tsx` only accept keys whose type matches
+  (`Toggle` takes boolean settings, `NumberField` numeric ones, and so on), and `ui/src/types.ts`
+  mirrors `Settings`.
 
 ## Start with Windows
 

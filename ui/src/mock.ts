@@ -69,7 +69,7 @@ export function mockApi(): Api {
   const push = () => setTimeout(() => onState(structuredClone(view)), 50);
   return {
     async send(r: Request) {
-      console.info("request", r);
+      console.info("request", JSON.stringify(r));
       switch (r.cmd) {
         case "toggle":
           view.off = !view.off;

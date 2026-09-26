@@ -201,7 +201,7 @@ app moved from PowerShell to Rust.
 
 ```
 src/        the app: platform-independent logic, and win/ for the Windows code (+ its tests)
-ui/         the settings window's page (TypeScript + Vite), served by Tauri from ui/dist
+ui/         the settings window's page (React + TypeScript + Vite), served by Tauri from ui/dist
 tests/      integration tests and fixtures
 examples/   fake_llama_server.rs, the test double the Windows tests run
 docs/       architecture, releasing
