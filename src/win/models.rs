@@ -1,7 +1,7 @@
 //! Downloading catalog models from Hugging Face: resumable, every file checked against
 //! Hugging Face's size and SHA-256, split models downloaded part by part.
 
-use super::net;
+use super::{net, sys};
 use crate::catalog::CatalogModel;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
@@ -35,14 +35,30 @@ pub fn hf_file_meta(base: &str, repo: &str, path: &str) -> Result<(u64, Option<S
 
 /// Downloads `m` into `models_dir`. `progress(done, total)` covers all parts. Files already
 /// there with the right size are kept.
+///
+/// Partial files live in `staging_dir`, which must be admin-only: `models_dir` is writable by
+/// the signed-in user, who could turn it into a link, and the elevated app would then create,
+/// append to or delete whatever file the link points at. Only a verified file is moved over.
 pub fn download_model(
     base: &str,
     m: &CatalogModel,
     models_dir: &Path,
+    staging_dir: &Path,
     mut progress: impl FnMut(u64, u64),
     cancel: Option<&AtomicBool>,
 ) -> Result<()> {
     std::fs::create_dir_all(models_dir)?;
+    std::fs::create_dir_all(staging_dir)?;
+    let not_a_link = || {
+        if sys::is_reparse_point(models_dir) {
+            bail!(
+                "{} is a link to another folder - make it a normal folder again",
+                models_dir.display()
+            );
+        }
+        Ok(())
+    };
+    not_a_link()?;
     let metas: Vec<(u64, Option<String>)> = m
         .files
         .iter()
@@ -58,7 +74,7 @@ pub fn download_model(
             progress(before, total);
             continue;
         }
-        let part = models_dir.join(format!("{name}.part"));
+        let part = staging_dir.join(format!("{name}.part"));
         if std::fs::metadata(&part).is_ok_and(|md| md.len() > *size) {
             let _ = std::fs::remove_file(&part); // corrupt: bigger than the real file
         }
@@ -80,6 +96,7 @@ pub fn download_model(
                 bail!("{name}: checksum mismatch - the download was deleted, try again");
             }
         }
+        not_a_link()?;
         std::fs::rename(&part, &dest)?;
         before += size;
         progress(before, total);

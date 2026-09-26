@@ -45,6 +45,9 @@ fn running_installed_copy() -> bool {
 }
 
 pub fn main() -> i32 {
+    // Before anything else (and before any thread starts): the elevated app must not pass the
+    // user's environment on to the programs it runs.
+    sys::scrub_environment();
     let cmd = match cli::parse(std::env::args().skip(1)) {
         Ok(c) => c,
         Err(e) => {

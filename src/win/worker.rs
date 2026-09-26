@@ -780,9 +780,10 @@ impl Worker {
             cancel: Arc::new(AtomicBool::new(false)),
         };
         let (done, total, cancel) = (d.done.clone(), d.total.clone(), d.cancel.clone());
-        let (tx, dir, base, id) = (
+        let (tx, dir, staging, base, id) = (
             self.tx_self.clone(),
             self.p.models_dir.clone(),
+            self.p.model_downloads.clone(),
             self.hf_base.clone(),
             id.to_string(),
         );
@@ -793,6 +794,7 @@ impl Worker {
                 &base,
                 &model,
                 &dir,
+                &staging,
                 |d, t| {
                     done.store(d, Ordering::Relaxed);
                     total.store(t, Ordering::Relaxed);

@@ -5,6 +5,7 @@
 //! C:\LLM\                admin-only (the elevated app runs llama-server.exe from here)
 //!   llama\               llama.cpp binaries
 //!   data\                settings.json, off.flag, logs
+//!     model-downloads\   models while they download (moved to models\ once verified)
 //!   models\              *.gguf (you can add your own)
 //!   ollaya\              Ollaya, which runs Laya (bin\ollaya.exe, lib\, its models\)
 //!   settings-backup.json your original Windows settings, restored on uninstall
@@ -23,6 +24,10 @@ pub struct Paths {
     pub llama_dir: PathBuf,
     pub server_exe: PathBuf,
     pub models_dir: PathBuf,
+    /// Partial model downloads. Admin-only, unlike `models_dir`: the elevated app writes,
+    /// appends to and deletes these files, which a link in a user-writable folder could
+    /// redirect to any file on the PC.
+    pub model_downloads: PathBuf,
     pub data_dir: PathBuf,
     pub settings: PathBuf,
     pub off_flag: PathBuf,
@@ -50,6 +55,7 @@ impl Paths {
             llama_dir: root.join("llama"),
             server_exe: root.join("llama").join("llama-server.exe"),
             models_dir: root.join("models"),
+            model_downloads: data_dir.join("model-downloads"),
             settings: data_dir.join("settings.json"),
             off_flag: data_dir.join("off.flag"),
             log: data_dir.join("tray.log"),
@@ -145,11 +151,14 @@ pub fn missing_parts(models_dir: &Path, first_part: &str) -> Vec<String> {
 }
 
 /// Where the installed app lives: `%ProgramFiles%\No Drama Llama`.
+/// Program Files comes from the known-folder API, not %ProgramFiles%: the elevated app
+/// inherits the signed-in user's environment, which unelevated programs can change.
 pub fn install_dir() -> PathBuf {
-    let pf = std::env::var_os("ProgramW6432")
-        .or_else(|| std::env::var_os("ProgramFiles"))
-        .unwrap_or_else(|| r"C:\Program Files".into());
-    PathBuf::from(pf).join(APP_NAME)
+    #[cfg(windows)]
+    let pf = crate::win::sys::program_files();
+    #[cfg(not(windows))]
+    let pf = PathBuf::from(r"C:\Program Files");
+    pf.join(APP_NAME)
 }
 
 pub fn installed_exe() -> PathBuf {
@@ -209,6 +218,13 @@ mod more_tests {
         assert!(!p.ollaya_dir.starts_with(&p.models_dir));
         assert!(p.ollaya_exe.starts_with(&p.ollaya_dir));
         assert!(p.ollaya_models.starts_with(&p.ollaya_dir));
+    }
+
+    #[test]
+    fn partial_downloads_stay_out_of_the_user_writable_models_folder() {
+        let p = Paths::under("/x");
+        assert!(!p.model_downloads.starts_with(&p.models_dir));
+        assert!(p.model_downloads.starts_with(&p.data_dir));
     }
 
     #[test]

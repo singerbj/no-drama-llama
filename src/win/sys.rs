@@ -4,23 +4,34 @@ use anyhow::{bail, Context, Result};
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     CloseHandle, GetLastError, LocalFree, ERROR_ALREADY_EXISTS, HANDLE, HLOCAL, WAIT_ABANDONED,
     WAIT_OBJECT_0,
 };
-use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
-use windows::Win32::Security::{
-    GetTokenInformation, TokenElevation, TokenUser, TOKEN_ELEVATION, TOKEN_QUERY, TOKEN_USER,
+use windows::Win32::Security::Authorization::{
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+    GetNamedSecurityInfoW, SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
 };
+use windows::Win32::Security::{
+    GetSecurityDescriptorDacl, GetTokenInformation, TokenElevation, TokenUser,
+    DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_ELEVATION, TOKEN_QUERY, TOKEN_USER,
+};
+use windows::Win32::Storage::FileSystem::CreateDirectoryW;
+use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
+use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
     CreateMutexW, GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, ReleaseMutex,
     WaitForSingleObject, INFINITE,
 };
-use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+use windows::Win32::UI::Shell::{
+    FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW, KF_FLAG_DEFAULT,
+    SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK, MB_YESNO,
     SW_SHOWNORMAL,
@@ -77,6 +88,122 @@ pub fn current_user_sid() -> Result<String> {
         let out = s.to_string()?;
         let _ = LocalFree(Some(HLOCAL(s.0 as *mut _)));
         Ok(out)
+    }
+}
+
+/// SYSTEM, Administrators and TrustedInstaller: the owners a folder the elevated app runs
+/// programs from may have. Any other owner can change the folder's permissions at will.
+pub const TRUSTED_OWNER_SIDS: &[&str] = &[
+    "S-1-5-18",
+    "S-1-5-32-544",
+    "S-1-5-80-956008885-3418522649-1831038044-1850803918-3017456440",
+];
+
+/// Whether `path` itself is a symlink or junction (without following it).
+pub fn is_reparse_point(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    std::fs::symlink_metadata(path)
+        .is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+}
+
+/// Whether `path` or any folder above it is a symlink or junction. For files the elevated app
+/// creates or deletes in the user's own folders, where a link could send it elsewhere.
+pub fn path_has_link(path: &Path) -> bool {
+    path.ancestors().any(is_reparse_point)
+}
+
+/// SID of `path`'s owner (e.g. `S-1-5-32-544`).
+pub fn owner_sid(path: &Path) -> Result<String> {
+    let name = wide(path);
+    unsafe {
+        let mut owner = PSID::default();
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        GetNamedSecurityInfoW(
+            PCWSTR(name.as_ptr()),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            None,
+            None,
+            &mut sd,
+        )
+        .ok()
+        .with_context(|| format!("couldn't read the owner of {}", path.display()))?;
+        let mut s = PWSTR::null();
+        let r = ConvertSidToStringSidW(owner, &mut s);
+        let out = r.and_then(|_| s.to_string().map_err(Into::into));
+        if !s.is_null() {
+            let _ = LocalFree(Some(HLOCAL(s.0 as *mut _)));
+        }
+        let _ = LocalFree(Some(HLOCAL(sd.0)));
+        Ok(out?)
+    }
+}
+
+/// A security descriptor parsed from SDDL, freed on drop.
+struct Sddl(PSECURITY_DESCRIPTOR);
+
+impl Sddl {
+    fn parse(sddl: &str) -> Result<Sddl> {
+        let w = wide(sddl);
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                PCWSTR(w.as_ptr()),
+                SDDL_REVISION_1,
+                &mut sd,
+                None,
+            )?;
+        }
+        Ok(Sddl(sd))
+    }
+}
+
+impl Drop for Sddl {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(self.0 .0)));
+        }
+    }
+}
+
+/// Creates the folder `path` with the permissions in `sddl` from the start, so there is no
+/// moment when it has the parent's (for `C:\` folders: every user may modify it).
+pub fn create_dir_with_sddl(path: &Path, sddl: &str) -> Result<()> {
+    let sd = Sddl::parse(sddl)?;
+    let sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd.0 .0,
+        bInheritHandle: false.into(),
+    };
+    let name = wide(path);
+    unsafe { CreateDirectoryW(PCWSTR(name.as_ptr()), Some(&sa)) }
+        .with_context(|| format!("couldn't create {}", path.display()))
+}
+
+/// Replaces `path`'s whole DACL with the one in `sddl`, in one step, and stops it inheriting
+/// from its parent. ACEs anyone else added are gone afterwards.
+pub fn set_dacl(path: &Path, sddl: &str) -> Result<()> {
+    let sd = Sddl::parse(sddl)?;
+    let name = wide(path);
+    unsafe {
+        let mut present = windows::core::BOOL::default();
+        let mut defaulted = windows::core::BOOL::default();
+        let mut dacl = std::ptr::null_mut();
+        GetSecurityDescriptorDacl(sd.0, &mut present, &mut dacl, &mut defaulted)?;
+        SetNamedSecurityInfoW(
+            PCWSTR(name.as_ptr()),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            Some(dacl),
+            None,
+        )
+        .ok()
+        .with_context(|| format!("couldn't set the permissions of {}", path.display()))
     }
 }
 
@@ -177,9 +304,134 @@ impl Drop for SingleInstance {
     }
 }
 
-/// A command that runs without flashing a console window.
+/// `C:\Windows\System32`, from the API: %SystemRoot% comes from the environment, which the
+/// signed-in user can change for the elevated app.
+pub fn system32() -> PathBuf {
+    let mut buf = [0u16; 260];
+    let n = unsafe { GetSystemDirectoryW(Some(&mut buf)) } as usize;
+    if n == 0 || n > buf.len() {
+        return PathBuf::from(r"C:\Windows\System32");
+    }
+    PathBuf::from(String::from_utf16_lossy(&buf[..n]))
+}
+
+/// `C:\Windows`
+pub fn windows_dir() -> PathBuf {
+    let s32 = system32();
+    s32.parent().map(Path::to_path_buf).unwrap_or(s32)
+}
+
+/// `C:\Program Files` (64-bit), from the known-folder API rather than %ProgramFiles%.
+pub fn program_files() -> PathBuf {
+    unsafe {
+        match SHGetKnownFolderPath(&FOLDERID_ProgramFiles, KF_FLAG_DEFAULT, None) {
+            Ok(p) => {
+                let out = p.to_string().ok().map(PathBuf::from);
+                CoTaskMemFree(Some(p.0 as *const _));
+                out.unwrap_or_else(|| r"C:\Program Files".into())
+            }
+            Err(_) => r"C:\Program Files".into(),
+        }
+    }
+}
+
+/// Where a Windows tool given by bare name (`schtasks.exe`) lives. Always an absolute path:
+/// a bare name is looked up next to this exe first, and the installer usually runs from
+/// Downloads, where any program can drop a fake `schtasks.exe` to be run elevated.
+pub fn system_tool(name: &str) -> PathBuf {
+    match name.to_ascii_lowercase().as_str() {
+        "powershell.exe" => system32().join(r"WindowsPowerShell\v1.0\powershell.exe"),
+        "explorer.exe" => windows_dir().join("explorer.exe"),
+        _ => system32().join(name),
+    }
+}
+
+/// Environment variables that make programs load code or change what they run. The elevated
+/// app inherits the signed-in user's environment (HKCU\Environment), which unelevated
+/// programs can write, so these would otherwise reach elevated children: .NET profilers in
+/// PowerShell (COR_PROFILER), WebView2's browser folder and arguments, llama.cpp and Ollaya
+/// options. Matched as case-insensitive prefixes.
+const UNSAFE_ENV_PREFIXES: &[&str] = &[
+    "COR_",
+    "CORECLR_",
+    "COMPLUS_",
+    "DOTNET_",
+    "WEBVIEW2_",
+    "LLAMA_",
+    "GGML_",
+    "OLLAYA_",
+    "PSEXECUTIONPOLICYPREFERENCE",
+    "PSMODULEPATH",
+];
+
+/// Drops [`UNSAFE_ENV_PREFIXES`] from this process's environment and rebuilds PATH and
+/// PSModulePath from admin-only locations, so every child starts from a clean environment.
+/// Call first thing in `main`, before any thread starts.
+pub fn scrub_environment() {
+    for (k, _) in std::env::vars_os() {
+        let upper = k.to_string_lossy().to_ascii_uppercase();
+        if UNSAFE_ENV_PREFIXES.iter().any(|p| upper.starts_with(p)) {
+            std::env::remove_var(&k);
+        }
+    }
+    let win = windows_dir();
+    let s32 = system32();
+    std::env::set_var("SystemRoot", &win);
+    std::env::set_var("windir", &win);
+    std::env::set_var(
+        "PSModulePath",
+        format!(
+            r"{};{}",
+            program_files().join(r"WindowsPowerShell\Modules").display(),
+            s32.join(r"WindowsPowerShell\v1.0\Modules").display()
+        ),
+    );
+    std::env::set_var("PATH", machine_path(&win, &s32));
+}
+
+/// The machine-wide PATH (admin-only in the registry), without the user's own entries.
+fn machine_path(win: &Path, s32: &Path) -> String {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    let base = [
+        s32.display().to_string(),
+        win.display().to_string(),
+        s32.join("Wbem").display().to_string(),
+        s32.join(r"WindowsPowerShell\v1.0").display().to_string(),
+    ];
+    let raw: String = winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")
+        .and_then(|k| k.get_value("Path"))
+        .unwrap_or_default();
+    let mut out: Vec<String> = base.to_vec();
+    for e in raw.split(';').map(str::trim).filter(|e| !e.is_empty()) {
+        let e = replace_ci(
+            &replace_ci(e, "%SystemRoot%", &base[1]),
+            "%windir%",
+            &base[1],
+        );
+        if !e.contains('%') && !out.iter().any(|o| o.eq_ignore_ascii_case(&e)) {
+            out.push(e);
+        }
+    }
+    out.join(";")
+}
+
+fn replace_ci(s: &str, from: &str, to: &str) -> String {
+    match s.to_ascii_lowercase().find(&from.to_ascii_lowercase()) {
+        Some(i) => format!("{}{to}{}", &s[..i], &s[i + from.len()..]),
+        None => s.to_string(),
+    }
+}
+
+/// A command that runs without flashing a console window. A bare program name is resolved
+/// to the Windows tool of that name ([`system_tool`]).
 pub fn hidden(program: impl AsRef<OsStr>) -> Command {
-    let mut c = Command::new(program);
+    let program = program.as_ref();
+    let mut c = if Path::new(program).components().count() == 1 {
+        Command::new(system_tool(&program.to_string_lossy()))
+    } else {
+        Command::new(program)
+    };
     c.creation_flags(CREATE_NO_WINDOW).stdin(Stdio::null());
     c
 }
@@ -257,9 +509,11 @@ pub fn powershell(script: &str) -> Result<String> {
 
 /// Opens a URL, file or folder with its default app, *not* elevated (explorer hands it off).
 pub fn open_unelevated(target: &Path) {
-    let _ = Command::new("explorer.exe").arg(target).spawn();
+    let _ = Command::new(system_tool("explorer.exe"))
+        .arg(target)
+        .spawn();
 }
 
 pub fn open_in_notepad(file: &Path) {
-    let _ = Command::new("notepad.exe").arg(file).spawn();
+    let _ = Command::new(system_tool("notepad.exe")).arg(file).spawn();
 }

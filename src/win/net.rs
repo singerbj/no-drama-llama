@@ -37,9 +37,17 @@ pub fn health_agent() -> ureq::Agent {
     agent_with(Some(Duration::from_millis(700)))
 }
 
-pub fn get_text(agent: &ureq::Agent, url: &str) -> Result<String> {
-    let mut resp = agent
+/// A GET that, for an https URL, refuses to follow a redirect to plain http.
+fn get(agent: &ureq::Agent, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    agent
         .get(url)
+        .config()
+        .https_only(url.starts_with("https://"))
+        .build()
+}
+
+pub fn get_text(agent: &ureq::Agent, url: &str) -> Result<String> {
+    let mut resp = get(agent, url)
         .header("Accept", "application/json")
         .call()
         .with_context(|| format!("GET {url}"))?;
@@ -51,8 +59,7 @@ pub fn get_text(agent: &ureq::Agent, url: &str) -> Result<String> {
 }
 
 pub fn get_bytes(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>> {
-    let mut resp = agent
-        .get(url)
+    let mut resp = get(agent, url)
         .call()
         .with_context(|| format!("GET {url}"))?;
     Ok(resp.body_mut().with_config().limit(limit).read_to_vec()?)
@@ -109,7 +116,7 @@ pub(crate) fn download_with_stall(
         DefaultResolver::default(),
     );
     let have = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-    let mut req = agent.get(url);
+    let mut req = get(&agent, url);
     if have > 0 {
         req = req.header("Range", format!("bytes={have}-"));
     }

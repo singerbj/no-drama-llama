@@ -55,11 +55,39 @@ pub fn apply(release: &Release, version: &Version) -> Result<()> {
     update::check_digest(exe, &data)?;
     update::verify_signature(&data, &sig_text, key, version)?;
 
-    let staged = paths::install_dir().join("no-drama-llama.exe.new");
-    std::fs::write(&staged, &data)?;
-    let r = self_replace::self_replace(&staged);
-    let _ = std::fs::remove_file(&staged);
-    r.context("couldn't replace the running exe")?;
+    // Swap the files entirely inside the admin-only install folder. Windows lets a running exe
+    // be renamed (not overwritten) within its volume, so: running -> .old, new -> exe. Never
+    // stage or run anything from %TEMP%, which unelevated code can write to.
+    let dir = paths::install_dir();
+    remove_leftovers();
+    let staged = dir.join("no-drama-llama.exe.new");
+    std::fs::write(&staged, &data).context("couldn't stage the update")?;
+    let old = dir.join(format!("no-drama-llama.{}{OLD_SUFFIX}", std::process::id()));
+    if let Err(e) = std::fs::rename(&current, &old) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e).context("couldn't move the running exe aside");
+    }
+    if let Err(e) = std::fs::rename(&staged, &current) {
+        let _ = std::fs::rename(&old, &current);
+        let _ = std::fs::remove_file(&staged);
+        return Err(e).context("couldn't replace the running exe");
+    }
     super::install::set_registered_version(version);
     Ok(())
+}
+
+/// Suffix of the exes an update moved aside; they're deleted once no longer running.
+const OLD_SUFFIX: &str = ".exe.old";
+
+/// Deletes exes left by earlier updates (skipping any still running).
+pub fn remove_leftovers() {
+    let Ok(entries) = std::fs::read_dir(paths::install_dir()) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_ascii_lowercase();
+        if name.starts_with("no-drama-llama.") && name.ends_with(OLD_SUFFIX) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }

@@ -47,6 +47,14 @@ fn shortcut_path() -> PathBuf {
     programs_dir().join(format!("{APP_NAME}.lnk"))
 }
 
+/// Deletes a Start menu shortcut. The folder is the user's own, so unelevated programs could
+/// make it a link to send this (elevated) delete to any file: never through a link.
+fn remove_shortcut(lnk: &Path) {
+    if !sys::path_has_link(lnk) {
+        let _ = std::fs::remove_file(lnk);
+    }
+}
+
 // ------------------------------------------------------------------ stop / migrate
 
 /// Stops the tray app (either edition), our llama-server and Ollaya.
@@ -79,38 +87,76 @@ fn migrate_from_powershell(p: &Paths) {
         println!("  {d}");
     }
     for f in setup::LEGACY_SHORTCUTS {
-        let _ = std::fs::remove_file(programs_dir().join(f));
+        remove_shortcut(&programs_dir().join(f));
     }
 }
 
+/// C:\LLM's permissions: full control for SYSTEM and Administrators (also its owner), read and
+/// run for Users, protected from C:\'s "every signed-in user may modify" default.
+const ROOT_SDDL: &str = "O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)";
+
+/// Makes sure C:\LLM is a real folder that only administrators control, before anything is
+/// put in it. Returns true if it already existed with some other owner: that owner could
+/// have changed anything inside, so its programs mustn't be trusted (see [`install`]).
+fn secure_root(p: &Paths) -> Result<bool> {
+    if sys::is_reparse_point(&p.root) {
+        bail!(
+            "{} is a link to another folder. Delete it and run the installer again.",
+            p.root.display()
+        );
+    }
+    if !p.root.exists() {
+        sys::create_dir_with_sddl(&p.root, ROOT_SDDL)?;
+        return Ok(false);
+    }
+    let owner = sys::owner_sid(&p.root)?;
+    Ok(!sys::TRUSTED_OWNER_SIDS.contains(&owner.as_str()))
+}
+
 /// C:\LLM admin-only (the elevated app runs llama-server.exe from it); models\ writable by you.
-/// Folders created under C:\ let every signed-in user modify them by default.
+/// Folders created under C:\ let every signed-in user modify them by default, and whoever
+/// created one stays its owner (who can always change its permissions), so ownership is taken
+/// too. `/L` everywhere: act on a link itself, never on where it points.
 fn set_acls(p: &Paths) -> Result<()> {
+    for d in [&p.llama_dir, &p.models_dir, &p.data_dir, &p.ollaya_dir] {
+        if sys::is_reparse_point(d) {
+            bail!(
+                "{} is a link to another folder. Delete it and run the installer again.",
+                d.display()
+            );
+        }
+    }
     let root = p.root.to_string_lossy().to_string();
     let me = sys::current_user_sid()?;
     sys::run(
         "icacls.exe",
-        &[
-            &root,
-            "/grant:r",
-            "*S-1-5-18:(OI)(CI)F",
-            "*S-1-5-32-544:(OI)(CI)F",
-            "*S-1-5-32-545:(OI)(CI)RX",
-            "/Q",
-        ],
+        &[&root, "/setowner", "*S-1-5-32-544", "/L", "/Q"],
     )?;
-    sys::run("icacls.exe", &[&root, "/inheritance:r", "/Q"])?;
-    let _ = sys::run("icacls.exe", &[&root, "/remove:g", &format!("*{me}"), "/Q"]); // left by older installs
+    sys::set_dacl(&p.root, ROOT_SDDL)?;
+    // Everything inside: owned by Administrators and inheriting only the root's permissions.
+    // Best effort (a file in use is skipped); programs in a folder that had another owner
+    // are downloaded again anyway (see `install`).
+    let inside = format!(r"{root}\*");
     let _ = sys::run(
         "icacls.exe",
-        &[&format!(r"{root}\*"), "/reset", "/T", "/C", "/Q"],
+        &[
+            &inside,
+            "/setowner",
+            "*S-1-5-32-544",
+            "/T",
+            "/C",
+            "/L",
+            "/Q",
+        ],
     );
+    let _ = sys::run("icacls.exe", &[&inside, "/reset", "/T", "/C", "/L", "/Q"]);
     sys::run(
         "icacls.exe",
         &[
             &p.models_dir.to_string_lossy(),
             "/grant",
             &format!("*{me}:(OI)(CI)M"),
+            "/L",
             "/Q",
         ],
     )?;
@@ -145,21 +191,27 @@ fn download_verified(asset: &crate::update::Asset, dest: &Path) -> Result<()> {
     let _ = std::fs::remove_file(dest);
     net::download(&asset.browser_download_url, dest, print_progress)?;
     println!();
-    if let Some(expected) = asset
+    // The elevated app runs what's in this zip, so an unverifiable one is refused.
+    let Some(expected) = asset
         .digest
         .as_deref()
         .and_then(|d| d.strip_prefix("sha256:"))
-    {
-        let actual = net::file_sha256(dest)?;
-        if !actual.eq_ignore_ascii_case(expected) {
-            let _ = std::fs::remove_file(dest);
-            bail!(
-                "{} checksum mismatch (expected {expected}, got {actual})",
-                asset.name
-            );
-        }
-        println!("  SHA-256 verified.");
+    else {
+        let _ = std::fs::remove_file(dest);
+        bail!(
+            "{} has no published SHA-256, so it can't be verified - pick a newer --llama-cpp-tag",
+            asset.name
+        );
+    };
+    let actual = net::file_sha256(dest)?;
+    if !actual.eq_ignore_ascii_case(expected) {
+        let _ = std::fs::remove_file(dest);
+        bail!(
+            "{} checksum mismatch (expected {expected}, got {actual})",
+            asset.name
+        );
     }
+    println!("  SHA-256 verified.");
     Ok(())
 }
 
@@ -287,7 +339,14 @@ fn install_model(p: &Paths, m: &CatalogModel) -> Result<()> {
         m.label(),
         m.size as f64 / 1e9
     );
-    models::download_model(models::HF, m, &p.models_dir, print_progress, None)?;
+    models::download_model(
+        models::HF,
+        m,
+        &p.models_dir,
+        &p.model_downloads,
+        print_progress,
+        None,
+    )?;
     println!();
     let mut s = Settings::load(&p.settings).0;
     s.model = m.primary_file();
@@ -477,6 +536,12 @@ fn create_shortcut(target: &Path, lnk: &Path) -> Result<()> {
         COINIT_APARTMENTTHREADED,
     };
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    if sys::path_has_link(lnk) {
+        bail!(
+            "{} goes through a link to another folder - not creating the shortcut there",
+            lnk.display()
+        );
+    }
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
@@ -538,11 +603,31 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
     println!("  {}", exe.display());
 
     step("Setting up C:\\LLM");
+    // Programs in a folder someone else owned can't be trusted: delete them (before taking
+    // ownership, so a failure in between can't leave them looking trusted, and again after,
+    // for anything put back meanwhile) so they're downloaded again.
+    let untrusted = secure_root(&p)?;
+    let drop_programs = || {
+        for d in [&p.llama_dir, &p.ollaya_dir] {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    };
+    if untrusted {
+        println!(
+            "  {} was created by another account: downloading llama.cpp and Ollaya again.",
+            p.root.display()
+        );
+        drop_programs();
+    }
     for d in [&p.root, &p.llama_dir, &p.models_dir, &p.data_dir] {
         std::fs::create_dir_all(d)?;
     }
     migrate_from_powershell(&p);
     set_acls(&p)?;
+    if untrusted {
+        drop_programs();
+        std::fs::create_dir_all(&p.llama_dir)?;
+    }
 
     step("Hardware");
     let nvidia = probe::nvidia_gpus();
@@ -598,7 +683,9 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
     adopt_start_with_windows(&p);
     let at_logon = Settings::load(&p.settings).0.start_with_windows;
     register_task(&p, &exe, at_logon)?;
-    create_shortcut(&exe, &shortcut_path())?;
+    if let Err(e) = create_shortcut(&exe, &shortcut_path()) {
+        println!("  No Start menu entry: {e:#}");
+    }
     register_uninstaller(&exe)?;
     run_task()?;
 
@@ -622,7 +709,7 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
 pub fn delete_install_dir_after_exit() {
     let dir = paths::install_dir();
     if std::env::current_exe().is_ok_and(|e| e.starts_with(&dir)) && dir.exists() {
-        let _ = std::process::Command::new("cmd.exe")
+        let _ = std::process::Command::new(sys::system_tool("cmd.exe"))
             .raw_arg(format!(
                 "/c ping -n 4 127.0.0.1 >nul & rmdir /s /q \"{}\"",
                 dir.display()
@@ -660,7 +747,7 @@ pub fn uninstall(keep_models: bool, yes: bool) -> Result<()> {
     step("Stopping the app and the model server");
     stop_running(&p);
     let _ = sys::run("schtasks.exe", &["/delete", "/tn", TASK_NAME, "/f"]);
-    let _ = std::fs::remove_file(shortcut_path());
+    remove_shortcut(&shortcut_path());
     migrate_from_powershell(&p); // also removes the PowerShell edition's task and shortcuts
 
     step("Restoring your power and network settings");

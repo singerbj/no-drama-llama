@@ -20,7 +20,6 @@ sha2 = "0.11"
 
 [target.'cfg(windows)'.dependencies]
 global-hotkey = "0.8"
-self-replace = "1"
 steamlocate = "2"
 # Settings window. custom-protocol: always serve the bundled UI (we build with plain cargo).
 tauri = { version = "2.11", default-features = false, features = ["wry", "compression", "custom-protocol"] }
@@ -34,6 +33,7 @@ windows = { version = "0.62", features = [
   "Win32_Graphics_Gdi",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
   "Win32_System_Com",
   "Win32_System_Console",
   "Win32_System_LibraryLoader",
