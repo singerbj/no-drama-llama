@@ -1,0 +1,64 @@
+---
+title: Introduction
+description: What No Drama Llama does, how it works, and where to start.
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+No Drama Llama turns a Windows gaming PC into an always-on local LLM server that **gets out of
+the way when you play**. It runs [llama.cpp](https://github.com/ggml-org/llama.cpp) with a
+[Qwen 3.8](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) model sized for your GPU. When a game
+starts, it stops the model so the game gets all of your VRAM, and it brings the model back once
+you quit.
+
+It ships as one self-installing Windows app, `no-drama-llama.exe`, that lives in the system tray.
+
+## How it works
+
+```
+  Running ──── a game starts ────►  Paused  ──── game closed for 60 s ────►  Loading ──► Running
+  (model on the GPU)               (llama-server stopped,                    (model reloads)
+                                    VRAM free for the game)
+```
+
+1. Every 5 seconds, the app checks for games. It looks at the folders your launchers install
+   games into, and at which other apps are using the GPU.
+2. When it finds a game, it stops `llama-server` and shows a small popup that doesn't take focus.
+3. When the game has been closed for `ResumeAfterSec` (60 seconds by default), it starts the
+   model again.
+
+The rest of the time, the model serves an OpenAI-compatible API and a chat web UI at
+`http://127.0.0.1:8080`.
+
+## Features
+
+<CardGrid>
+  <Card title="Fits any GPU" icon="laptop">
+    NVIDIA, AMD or Intel. The installer picks CUDA or Vulkan, and llama.cpp sizes the context
+    and GPU layers to your free VRAM. See [Models and GPUs](/docs/guides/models/).
+  </Card>
+  <Card title="Game detection" icon="magnifier">
+    Reads the records of Steam, Epic, GOG, EA, Ubisoft, Battle.net, Riot, Xbox and more, and
+    watches per-process GPU use. See [Game detection](/docs/guides/game-detection/).
+  </Card>
+  <Card title="OpenAI-compatible API" icon="seti:json">
+    Use any OpenAI client, editor plugin or agent. See [Chat and API](/docs/guides/api/).
+  </Card>
+  <Card title="Tray app" icon="setting">
+    Status at a glance, every setting in the right-click menu, and Ctrl+Alt+L to turn it on or
+    off. See [Tray menu](/docs/reference/tray-menu/).
+  </Card>
+  <Card title="Always on, low power" icon="moon">
+    No sleep, screen off after 10 minutes, power saving and Wake-on-LAN. See
+    [Always-on PC](/docs/guides/always-on/).
+  </Card>
+  <Card title="Signed auto-update" icon="approve-check">
+    Installs only releases signed with the project key. See [Updates](/docs/guides/updates/).
+  </Card>
+</CardGrid>
+
+## Next steps
+
+- [Install it](/docs/install/): download one exe and choose **Yes**.
+- [First steps](/docs/first-steps/): the tray icon, the chat UI and the hotkey.
+- [Connect your tools](/docs/guides/api/) to the API.

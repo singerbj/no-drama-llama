@@ -1,0 +1,71 @@
+---
+title: Installation
+description: Requirements, installing No Drama Llama, and installer options.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+## Requirements
+
+- **Windows 10 or 11** (x64), signed in with an **administrator** account.
+- **Any GPU with a Vulkan or CUDA driver.** More VRAM means a better model, but everything from
+  8 GB cards up works (see [Models and GPUs](/docs/guides/models/)). Without a GPU it still runs
+  on the CPU, slowly.
+- **Free space on `C:`** for the model: 8 – 30 GB for Qwen 3.8 27B, 75 – 115 GB for Flash-Next.
+
+## Install
+
+<Steps>
+
+1. Download `no-drama-llama.exe` from the
+   [latest release](https://github.com/singerbj/no-drama-llama/releases/latest).
+
+2. Run it, choose **Yes** to install, and approve the administrator prompt.
+
+3. Wait for the console window to finish. The installer:
+   - detects your GPU and installs the matching llama.cpp build: CUDA on NVIDIA, Vulkan on AMD
+     and Intel
+   - measures the GPU's memory and downloads the best model for it
+
+4. The tray icon appears and the model starts loading. The icon turns green when it's ready.
+
+</Steps>
+
+If a download is interrupted, run the exe again and it resumes. Every download is checked
+against its published SHA-256.
+
+<Aside type="caution" title="“Windows protected your PC”">
+The exe isn't code-signed yet, so SmartScreen warns on first run. Choose **More info → Run
+anyway**, or [build it yourself](/docs/contributing/development/). The in-app updater still
+verifies every update against the project's signing key.
+</Aside>
+
+## Where things go
+
+| Path | What |
+| --- | --- |
+| `C:\Program Files\No Drama Llama` | The app. It starts with Windows and appears in **Settings → Apps**. |
+| `C:\LLM\llama` | llama.cpp |
+| `C:\LLM\models` | Models (`.gguf`). You can drop your own in here. |
+| `C:\LLM\data` | `settings.json`, logs |
+
+## Installer options
+
+Run these from a terminal in the folder with the exe:
+
+```powershell
+.\no-drama-llama.exe models                          # what fits this PC
+.\no-drama-llama.exe install --model qwen3.8-27b:UD-Q5_K_XL
+.\no-drama-llama.exe install --model none            # bring your own .gguf
+.\no-drama-llama.exe install --backend vulkan        # force a llama.cpp build (vulkan, cuda12, cuda13)
+.\no-drama-llama.exe install --skip-power-settings --skip-wake-on-lan
+.\no-drama-llama.exe install --llama-cpp-tag b6500   # pin a llama.cpp build
+.\no-drama-llama.exe install --update-llama-cpp      # re-download llama.cpp
+```
+
+See the [command-line reference](/docs/reference/cli/) for every option.
+
+## Upgrading from the PowerShell edition
+
+Just run the new exe. Your settings and models are kept, and the old scripts, scheduled task
+and shortcuts are removed. The `C:\LLM` layout and `settings.json` keys haven't changed.

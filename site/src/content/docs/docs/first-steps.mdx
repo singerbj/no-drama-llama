@@ -1,0 +1,62 @@
+---
+title: First steps
+description: The tray icon, the chat UI, the API and the on/off hotkey.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## The tray icon
+
+The llama in your system tray shows what the model is doing:
+
+| Icon | Status |
+| --- | --- |
+| 🟢 | **Running**: ready for requests |
+| 🟠 | **Loading** the model |
+| 🔵 | **Paused for a game**: the model is stopped and your VRAM is free |
+| ⚪ | **Off**: you turned it off |
+| 🔴 | **Error**: see [Troubleshooting](/docs/reference/troubleshooting/) |
+
+Right-click it for the menu. The first line shows the status, the model and the context
+length llama.cpp chose, for example *Running - Qwen3.8 27B Q4_K_XL · 96K context*.
+
+<Aside type="tip">
+Windows hides new tray icons in the overflow menu. Drag the llama onto the taskbar to keep it
+visible.
+</Aside>
+
+## Chat
+
+Double-click the tray icon, or open [http://127.0.0.1:8080](http://127.0.0.1:8080). That's llama.cpp's built-in chat UI.
+
+## Use the API
+
+The API is at `http://127.0.0.1:8080/v1` and speaks the OpenAI protocol:
+
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+See [Chat and API](/docs/guides/api/) for SDK examples and tool setup.
+
+## Turn it on and off
+
+- Press **Ctrl+Alt+L** from anywhere, or
+- choose **Turn off** / **Turn on** in the tray menu.
+
+Turning it off frees the GPU until you turn it back on, even across restarts.
+
+## Play a game
+
+Just play. When a game starts, you'll see a popup at the top of the screen:
+
+> **LLM paused** · *Game (Steam) detected - GPU freed*
+
+It doesn't take focus, and clicks pass through it. Once you've quit the game for 60 seconds,
+the model loads again. If something that isn't a game pauses it, see
+[Game detection](/docs/guides/game-detection/#when-it-gets-it-wrong).
+
+## If you closed the tray app
+
+Open the Start menu and run **No Drama Llama**.

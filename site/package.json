@@ -1,0 +1,26 @@
+{
+  "name": "no-drama-llama-site",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "sync": "node scripts/sync-docs.ts",
+    "dev": "npm run sync && astro dev",
+    "build": "npm run sync && astro check && astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@astrojs/markdown-satteri": "^0.4.2",
+    "@astrojs/starlight": "^0.42.4",
+    "astro": "^7.3.5",
+    "satteri": "^0.10.5",
+    "sharp": "^0.35.4",
+    "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4"
+  }
+}
