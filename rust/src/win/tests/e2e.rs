@@ -16,6 +16,7 @@ struct Harness {
     rx: Receiver<UiMsg>,
     last: Option<Snapshot>,
     popups: Vec<String>,
+    self_rx: Receiver<Cmd>,
 }
 
 impl Harness {
@@ -35,7 +36,7 @@ impl Harness {
         };
         s.save(&p.settings).unwrap();
         let (tx_ui, rx) = mpsc::channel();
-        let (tx_cmd, _rx_cmd) = mpsc::channel();
+        let (tx_cmd, self_rx) = mpsc::channel();
         let w = Worker::new(p.clone(), tx_ui, tx_cmd);
         Harness {
             _tmp: tmp,
@@ -44,6 +45,7 @@ impl Harness {
             rx,
             last: None,
             popups: Vec::new(),
+            self_rx,
         }
     }
 
@@ -113,9 +115,24 @@ fn worker_end_to_end() {
         "kwargs arrive intact: {argv}"
     );
     assert!(args[args.iter().position(|a| *a == "-m").unwrap() + 1].ends_with(DEFAULT_MODEL));
+    // Auto sizing: llama.cpp fits GPU layers and context itself; we report what it chose
+    assert!(!args.contains(&"-ngl"), "GPU layers left to --fit: {argv}");
+    assert!(!args.contains(&"-c"), "context left to --fit: {argv}");
     let snap = h.last.clone().unwrap();
     assert!(snap.status_text.starts_with("Running - "));
+    assert!(
+        snap.status_text.ends_with(" · 64K context"),
+        "{}",
+        snap.status_text
+    );
+    assert_eq!(snap.n_ctx, Some(65536));
     assert_eq!(snap.models.len(), 1);
+    assert_eq!(
+        snap.pc.vram,
+        16384 * 1024 * 1024,
+        "GPU memory from llama-server --list-devices"
+    );
+    assert_eq!(snap.gpu_name.as_deref(), Some("Fake GPU 9000 (16 GB)"));
 
     // 2. A game starts: server stopped, status Paused naming the game
     let game_exe = h.p.root.join("games").join("ndl-fake-game.exe");
@@ -152,6 +169,21 @@ fn worker_end_to_end() {
     h.until("running on new port", |s| *s == Status::Running);
     let argv = std::fs::read_to_string(h.p.llama_dir.join("argv.txt")).unwrap();
     assert!(argv.contains(&new_port.to_string()));
+
+    // 5b. A fixed context size is passed through, and auto goes back to fitting
+    let argv_file = h.p.llama_dir.join("argv.txt");
+    h.cmd(Cmd::Edit(Box::new(|s| s.context = 16384)));
+    h.until("running with fixed context", |s| {
+        *s == Status::Running
+            && std::fs::read_to_string(&argv_file).is_ok_and(|a| a.contains("-c\n16384"))
+    });
+    h.cmd(Cmd::Edit(Box::new(|s| {
+        s.context = crate::settings::CONTEXT_AUTO
+    })));
+    h.until("back to auto", |s| {
+        *s == Status::Running
+            && std::fs::read_to_string(&argv_file).is_ok_and(|a| !a.lines().any(|l| l == "-c"))
+    });
     assert_eq!(Settings::load(&h.p.settings).0.port, new_port, "saved");
 
     // 6. Hand edit of settings.json is picked up
@@ -159,7 +191,6 @@ fn worker_end_to_end() {
     s.reasoning = crate::settings::Reasoning::None;
     std::thread::sleep(std::time::Duration::from_millis(1100)); // distinct mtime
     s.save(&h.p.settings).unwrap();
-    let argv_file = h.p.llama_dir.join("argv.txt");
     h.until("restarted with reasoning none", |st| {
         *st == Status::Running
             && std::fs::read_to_string(&argv_file)
@@ -199,4 +230,87 @@ fn worker_end_to_end() {
     std::fs::remove_file(h.p.llama_dir.join("crash")).unwrap();
     h.cmd(Cmd::Restart);
     h.until("running after restart", |s| *s == Status::Running);
+}
+
+#[test]
+fn model_download_from_the_tray_switches_to_it() {
+    let m = crate::catalog::find("qwen3.8-27b:UD-IQ2_XXS").unwrap();
+    let data: Vec<u8> = (0..2_000_000u32).map(|i| (i % 251) as u8).collect();
+    let fake = super::hf::start(vec![super::hf::file(m.repo, &m.files[0], data.clone())]);
+    let mut h = Harness::new(free_port());
+    h.w.hf_base = fake.base.clone();
+    h.until("running", |s| *s == Status::Running);
+
+    h.cmd(Cmd::DownloadModel {
+        id: m.id.clone(),
+        switch: true,
+    });
+    let file = m.primary_file();
+    let argv_file = h.p.llama_dir.join("argv.txt");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        // the download thread reports back through the worker's own channel; deliver it
+        while let Ok(c) = h.self_rx.try_recv() {
+            h.cmd(c);
+        }
+        let st = h.tick();
+        let snap = h.last.clone().unwrap();
+        if snap.download.is_none()
+            && snap.settings.model == file
+            && st == Status::Running
+            && std::fs::read_to_string(&argv_file).is_ok_and(|a| a.contains(&file))
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < end,
+            "download never finished; popups {:?}",
+            h.popups
+        );
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    assert_eq!(std::fs::read(h.p.model(&file)).unwrap(), data);
+    assert!(h.popups.contains(&"Model downloaded".to_string()));
+    assert_eq!(Settings::load(&h.p.settings).0.model, file, "saved");
+    assert_eq!(h.last.as_ref().unwrap().models.len(), 2);
+}
+
+#[test]
+fn cancelled_download_reports_and_keeps_the_old_model() {
+    let m = crate::catalog::find("qwen3.8-27b:UD-Q2_K_XL").unwrap();
+    let data: Vec<u8> = vec![7u8; 64 * 1024 * 1024];
+    let fake = super::hf::start(vec![super::hf::file(m.repo, &m.files[0], data)]);
+    let mut h = Harness::new(free_port());
+    h.w.hf_base = fake.base.clone();
+    let before = Settings::load(&h.p.settings).0.model;
+    h.cmd(Cmd::DownloadModel {
+        id: m.id.clone(),
+        switch: true,
+    });
+    h.cmd(Cmd::CancelDownload);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !h
+        .popups
+        .iter()
+        .any(|p| p == "Download cancelled" || p == "Model downloaded")
+    {
+        while let Ok(c) = h.self_rx.try_recv() {
+            h.cmd(c);
+        }
+        h.tick();
+        assert!(
+            std::time::Instant::now() < end,
+            "no result; popups {:?}",
+            h.popups
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        h.popups.contains(&"Download cancelled".to_string()),
+        "{:?}",
+        h.popups
+    );
+    assert_eq!(Settings::load(&h.p.settings).0.model, before);
+    assert!(h.last.as_ref().unwrap().download.is_none());
+    assert!(!h.p.model(&m.primary_file()).exists());
 }

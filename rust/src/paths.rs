@@ -9,7 +9,7 @@
 //!   settings-backup.json your original Windows settings, restored on uninstall
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const APP_NAME: &str = "No Drama Llama";
 pub const TASK_NAME: &str = "No Drama Llama";
@@ -56,24 +56,73 @@ impl Paths {
         self.models_dir.join(name)
     }
 
-    /// `.gguf` models in the models folder (vision projectors and imatrix files excluded), sorted.
+    /// `.gguf` models in the models folder (vision projectors and imatrix files excluded),
+    /// sorted. A split model shows once, as its first part, with the size of all parts.
     pub fn list_models(&self) -> Vec<(String, u64)> {
-        let mut v: Vec<(String, u64)> = std::fs::read_dir(&self.models_dir)
+        let files: Vec<(String, u64)> = std::fs::read_dir(&self.models_dir)
             .into_iter()
             .flatten()
             .flatten()
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().into_owned();
-                let lower = name.to_ascii_lowercase();
-                let is_model = lower.ends_with(".gguf")
-                    && !lower.starts_with("mmproj")
-                    && !lower.starts_with("imatrix");
-                is_model.then(|| (name, e.metadata().map(|m| m.len()).unwrap_or(0)))
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    e.metadata().map(|m| m.len()).unwrap_or(0),
+                )
             })
             .collect();
-        v.sort();
-        v
+        group_models(files)
     }
+}
+
+/// `name-00002-of-00003.gguf` -> (`name`, 2, 3)
+pub fn split_part(file: &str) -> Option<(&str, u32, u32)> {
+    let stem = file
+        .strip_suffix(".gguf")
+        .or_else(|| file.strip_suffix(".GGUF"))?;
+    let (rest, total) = stem.rsplit_once("-of-")?;
+    let (base, index) = rest.rsplit_once('-')?;
+    if index.len() != 5 || total.len() != 5 {
+        return None;
+    }
+    Some((base, index.parse().ok()?, total.parse().ok()?))
+}
+
+/// Model files -> loadable models with their total sizes.
+pub fn group_models(files: Vec<(String, u64)>) -> Vec<(String, u64)> {
+    let is_model = |n: &str| {
+        let l = n.to_ascii_lowercase();
+        l.ends_with(".gguf") && !l.starts_with("mmproj") && !l.starts_with("imatrix")
+    };
+    let mut v: Vec<(String, u64)> = files
+        .iter()
+        .filter(|(n, _)| is_model(n))
+        .filter(|(n, _)| split_part(n).is_none_or(|(_, i, _)| i == 1))
+        .map(|(n, size)| match split_part(n) {
+            Some((base, _, total)) => {
+                let all: u64 = files
+                    .iter()
+                    .filter(|(m, _)| split_part(m).is_some_and(|(b, _, t)| b == base && t == total))
+                    .map(|(_, s)| s)
+                    .sum();
+                (n.clone(), all)
+            }
+            None => (n.clone(), *size),
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+/// Parts of a split model that aren't on disk yet (empty for single files).
+pub fn missing_parts(models_dir: &Path, first_part: &str) -> Vec<String> {
+    let Some((base, _, total)) = split_part(first_part) else {
+        return Vec::new();
+    };
+    (1..=total)
+        .map(|i| format!("{base}-{i:05}-of-{total:05}.gguf"))
+        .filter(|f| !models_dir.join(f).exists())
+        .collect()
 }
 
 /// Where the installed app lives: `%ProgramFiles%\No Drama Llama`.
@@ -170,6 +219,56 @@ mod more_tests {
     fn installed_exe_is_under_program_files() {
         let e = installed_exe();
         assert!(e.ends_with(PathBuf::from(APP_NAME).join(EXE_NAME)));
+    }
+
+    #[test]
+    fn split_models_show_once_with_their_total_size() {
+        let files = vec![
+            (
+                "Qwen3.8-Flash-Next-UD-IQ1_S-00001-of-00003.gguf".to_string(),
+                10,
+            ),
+            (
+                "Qwen3.8-Flash-Next-UD-IQ1_S-00002-of-00003.gguf".to_string(),
+                20,
+            ),
+            (
+                "Qwen3.8-Flash-Next-UD-IQ1_S-00003-of-00003.gguf".to_string(),
+                30,
+            ),
+            ("small.gguf".to_string(), 5),
+            ("orphan-00002-of-00002.gguf".to_string(), 7),
+        ];
+        assert_eq!(
+            group_models(files),
+            vec![
+                (
+                    "Qwen3.8-Flash-Next-UD-IQ1_S-00001-of-00003.gguf".to_string(),
+                    60
+                ),
+                ("small.gguf".to_string(), 5)
+            ]
+        );
+    }
+
+    #[test]
+    fn split_part_names() {
+        assert_eq!(split_part("a-b-00002-of-00004.gguf"), Some(("a-b", 2, 4)));
+        assert_eq!(split_part("model.gguf"), None);
+        assert_eq!(split_part("x-2-of-4.gguf"), None, "needs 5-digit parts");
+        assert_eq!(split_part("x-00001-of-00002.bin"), None);
+    }
+
+    #[test]
+    fn missing_parts_of_a_split_model() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("m-00001-of-00003.gguf"), b"").unwrap();
+        std::fs::write(dir.path().join("m-00003-of-00003.gguf"), b"").unwrap();
+        assert_eq!(
+            missing_parts(dir.path(), "m-00001-of-00003.gguf"),
+            vec!["m-00002-of-00003.gguf"]
+        );
+        assert!(missing_parts(dir.path(), "single.gguf").is_empty());
     }
 
     #[test]

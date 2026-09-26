@@ -2,7 +2,9 @@
 //! end-to-end run of the worker against a fake llama-server. Run on Windows CI.
 
 mod e2e;
+mod hf;
 mod http;
+mod models;
 mod platform;
 
 use std::path::{Path, PathBuf};

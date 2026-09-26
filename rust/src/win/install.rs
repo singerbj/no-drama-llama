@@ -1,9 +1,11 @@
 //! `install` / `uninstall`: everything the PowerShell edition's install.ps1 / uninstall.ps1
 //! did, plus migrating from it. Runs elevated in a console window.
 
-use super::{net, procs::Procs, sys};
+use super::{models, net, probe, procs::Procs, sys};
+use crate::catalog::{self, CatalogModel};
+use crate::hardware::{self, Backend};
 use crate::paths::{self, Paths, APP_NAME, TASK_NAME};
-use crate::settings::DEFAULT_MODEL;
+use crate::settings::Settings;
 use crate::setup;
 use crate::update::Release;
 use anyhow::{bail, Context, Result};
@@ -14,13 +16,16 @@ use std::path::{Path, PathBuf};
 use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_ALL_ACCESS};
 use winreg::RegKey;
 
-const MODEL_REPO: &str = "unsloth/Qwen3.8-27B-GGUF";
 const OLD_TASK: &str = "Local LLM Guard";
 const UNINSTALL_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NoDramaLlama";
 
 #[derive(Debug, Default)]
 pub struct InstallOptions {
     pub skip_model: bool,
+    /// Catalog id to download; None = the best for this PC
+    pub model: Option<String>,
+    /// None = the best for this PC
+    pub backend: Option<Backend>,
     pub skip_power: bool,
     pub skip_wol: bool,
     pub llama_tag: Option<String>,
@@ -126,41 +131,96 @@ fn print_progress(done: u64, total: u64) {
     let _ = std::io::stdout().flush();
 }
 
-pub fn install_llama_cpp(p: &Paths, tag: Option<&str>) -> Result<()> {
-    let api = match tag {
-        Some(t) => format!("https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{t}"),
-        None => "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest".into(),
-    };
-    let rel = Release::parse(&net::get_text(&net::agent(), &api)?)?;
-    let Some(asset) = rel
-        .assets
-        .iter()
-        .find(|a| a.name.ends_with("bin-win-vulkan-x64.zip"))
-    else {
-        bail!(
-            "llama.cpp {} has no *bin-win-vulkan-x64.zip asset - try --llama-cpp-tag <older tag>",
-            rel.tag_name
-        );
-    };
-    println!("Downloading llama.cpp {} (Vulkan)...", rel.tag_name);
-    let zip_path = p.root.join("llama-download.zip"); // admin-only, unlike %TEMP%
-    let _ = std::fs::remove_file(&zip_path);
-    net::download(&asset.browser_download_url, &zip_path, print_progress)?;
+/// llama.cpp build installed in `llama\` (vulkan / cuda12 / cuda13), if known.
+pub fn installed_backend(p: &Paths) -> Option<Backend> {
+    std::fs::read_to_string(p.llama_dir.join("backend.txt"))
+        .ok()
+        .and_then(|s| Backend::parse(&s))
+}
+
+fn download_verified(asset: &crate::update::Asset, dest: &Path) -> Result<()> {
+    let _ = std::fs::remove_file(dest);
+    net::download(&asset.browser_download_url, dest, print_progress)?;
     println!();
     if let Some(expected) = asset
         .digest
         .as_deref()
         .and_then(|d| d.strip_prefix("sha256:"))
     {
-        let actual = net::file_sha256(&zip_path)?;
+        let actual = net::file_sha256(dest)?;
         if !actual.eq_ignore_ascii_case(expected) {
-            let _ = std::fs::remove_file(&zip_path);
-            bail!("llama.cpp checksum mismatch (expected {expected}, got {actual})");
+            let _ = std::fs::remove_file(dest);
+            bail!(
+                "{} checksum mismatch (expected {expected}, got {actual})",
+                asset.name
+            );
         }
         println!("  SHA-256 verified.");
     }
+    Ok(())
+}
+
+/// Installs the llama.cpp build for `backend` (falling back to Vulkan if a CUDA build is
+/// missing from the release). Returns the backend actually installed.
+pub fn install_llama_cpp(p: &Paths, tag: Option<&str>, backend: Backend) -> Result<Backend> {
+    let api = match tag {
+        Some(t) => format!("https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{t}"),
+        None => "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest".into(),
+    };
+    let rel = Release::parse(&net::get_text(&net::agent(), &api)?)?;
+    let names: Vec<&str> = rel.assets.iter().map(|a| a.name.as_str()).collect();
+    let Some((used, main, runtime)) = hardware::llama_assets_with_fallback(&names, backend) else {
+        bail!(
+            "llama.cpp {} has no Windows build for {} - try --llama-cpp-tag <older tag>",
+            rel.tag_name,
+            backend.label()
+        );
+    };
+    if used != backend {
+        println!(
+            "  No {} build in this release; using {}.",
+            backend.label(),
+            used.label()
+        );
+    }
+    let asset = |n: &str| rel.assets.iter().find(|a| a.name == n).unwrap();
+    println!(
+        "Downloading llama.cpp {} ({})...",
+        rel.tag_name,
+        used.label()
+    );
+    let zip_path = p.root.join("llama-download.zip"); // admin-only, unlike %TEMP%
+    download_verified(asset(main), &zip_path)?;
     extract_llama_zip(&zip_path, &p.llama_dir)?;
     let _ = std::fs::remove_file(&zip_path);
+    if let Some(rt) = runtime {
+        println!("Downloading the CUDA runtime...");
+        download_verified(asset(rt), &zip_path)?;
+        extract_zip_into(&zip_path, &p.llama_dir)?;
+        let _ = std::fs::remove_file(&zip_path);
+    }
+    std::fs::write(p.llama_dir.join("backend.txt"), used.as_str())?;
+    Ok(used)
+}
+
+/// Extracts a zip's files flat into `dir` (the CUDA runtime DLLs go next to llama-server.exe).
+pub(crate) fn extract_zip_into(zip_path: &Path, dir: &Path) -> Result<()> {
+    let tmp = dir.join(".extract");
+    let _ = std::fs::remove_dir_all(&tmp);
+    zip::ZipArchive::new(std::fs::File::open(zip_path)?)?
+        .extract(&tmp)
+        .context("couldn't unpack")?;
+    let mut stack = vec![tmp.clone()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d)?.flatten() {
+            if e.path().is_dir() {
+                stack.push(e.path());
+            } else {
+                std::fs::rename(e.path(), dir.join(e.file_name()))?;
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
     Ok(())
 }
 
@@ -197,56 +257,39 @@ pub(crate) fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-fn install_model(p: &Paths) -> Result<()> {
-    let dest = p.model(DEFAULT_MODEL);
-    let part = dest.with_extension("gguf.part");
-    // Expected size + SHA-256 from Hugging Face's file listing (LFS metadata)
-    let (size, sha) = match net::get_text(
-        &net::agent(),
-        &format!("https://huggingface.co/api/models/{MODEL_REPO}/tree/main"),
-    ) {
-        Ok(text) => {
-            let list: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-            let entry = list
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|e| e["path"] == DEFAULT_MODEL);
-            (
-                entry.and_then(|e| e["lfs"]["size"].as_u64()).unwrap_or(0),
-                entry.and_then(|e| e["lfs"]["oid"].as_str().map(str::to_owned)),
-            )
-        }
-        Err(e) => {
-            println!("  Couldn't read the model checksum from Hugging Face ({e}); skipping verification.");
-            (0, None)
-        }
-    };
-    let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-    if size > 0 && have > size {
-        let _ = std::fs::remove_file(&part); // corrupt: bigger than the real file
+/// Which model to download: an explicit choice, else nothing if the configured model is
+/// already there, else the best one for this PC.
+fn choose_model(p: &Paths, opts: &InstallOptions, pc: &catalog::Machine) -> Option<CatalogModel> {
+    if opts.skip_model {
+        return None;
     }
-    if size == 0 || have != size {
-        println!("Downloading {DEFAULT_MODEL} ({:.1} GB). Interrupted? Run the installer again to resume.", size as f64 / 1e9);
-        let url = format!("https://huggingface.co/{MODEL_REPO}/resolve/main/{DEFAULT_MODEL}");
-        net::download(&url, &part, print_progress)?;
-        println!();
+    if let Some(id) = &opts.model {
+        return catalog::find(id);
     }
-    let got = std::fs::metadata(&part)?.len();
-    if size > 0 && got != size {
-        bail!(
-            "model download incomplete ({got} of {size} bytes) - run the installer again to resume"
-        );
+    let current = Settings::load(&p.settings).0.model;
+    if p.model(&current).exists() && paths::missing_parts(&p.models_dir, &current).is_empty() {
+        println!("  Keeping your model: {current}");
+        return None;
     }
-    if let Some(sha) = sha {
-        println!("  Verifying SHA-256 (takes a minute)...");
-        let actual = net::file_sha256(&part)?;
-        if !actual.eq_ignore_ascii_case(&sha) {
-            let _ = std::fs::remove_file(&part);
-            bail!("model checksum mismatch (expected {sha}, got {actual}); the file was deleted - run the installer again");
-        }
+    let rec = catalog::recommend(pc);
+    if rec.is_none() {
+        println!("  No model in the catalog fits this PC. Put a smaller .gguf in {} and pick it from the tray.", p.models_dir.display());
     }
-    std::fs::rename(&part, &dest)?;
+    rec
+}
+
+fn install_model(p: &Paths, m: &CatalogModel) -> Result<()> {
+    println!(
+        "Downloading {} ({:.1} GB). Interrupted? Run the installer again to resume.",
+        m.label(),
+        m.size as f64 / 1e9
+    );
+    models::download_model(models::HF, m, &p.models_dir, print_progress, None)?;
+    println!();
+    let mut s = Settings::load(&p.settings).0;
+    s.model = m.primary_file();
+    s.save(&p.settings)?;
+    println!("  Selected {}", m.primary_file());
     Ok(())
 }
 
@@ -440,13 +483,36 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
     migrate_from_powershell(&p);
     set_acls(&p)?;
 
-    if opts.update_llama || !p.server_exe.exists() {
-        step("llama.cpp");
-        install_llama_cpp(&p, opts.llama_tag.as_deref())?;
+    step("Hardware");
+    let nvidia = probe::nvidia_gpus();
+    let backend = opts
+        .backend
+        .unwrap_or_else(|| hardware::choose_backend(&nvidia));
+    for g in &nvidia {
+        println!(
+            "  {} - driver {}, compute {}",
+            g.name, g.driver_major, g.compute_cap
+        );
     }
-    if !opts.skip_model && !p.model(DEFAULT_MODEL).exists() {
+    println!("  llama.cpp build: {}", backend.label());
+
+    if opts.update_llama
+        || !p.server_exe.exists()
+        || installed_backend(&p).is_some_and(|b| b != backend)
+    {
+        step("llama.cpp");
+        install_llama_cpp(&p, opts.llama_tag.as_deref(), backend)?;
+    }
+    let (pc, gpu) = probe::machine(&p.server_exe);
+    println!(
+        "  GPU: {} · RAM: {:.0} GB",
+        gpu.as_deref()
+            .unwrap_or("none found (the model will run on the CPU)"),
+        hardware::gib(pc.ram)
+    );
+    if let Some(m) = choose_model(&p, opts, &pc) {
         step("Model");
-        install_model(&p)?;
+        install_model(&p, &m)?;
     }
 
     // Only on the first run, so re-running install never overwrites the original values.

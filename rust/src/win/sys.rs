@@ -202,6 +202,44 @@ pub fn run(program: &str, args: &[&str]) -> Result<Output> {
     Ok(out)
 }
 
+/// Runs a program, killing it if it takes longer than `timeout`. Returns stdout even when the
+/// exit code is non-zero (some tools print what we need and then fail).
+pub fn run_with_timeout(
+    program: &Path,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<String> {
+    use std::io::Read;
+    let mut child = hidden(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("couldn't run {}", program.display()))?;
+    let mut out = child.stdout.take().unwrap();
+    let mut err = child.stderr.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        let mut e = String::new();
+        let _ = err.read_to_string(&mut e);
+        s + &e
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if child.try_wait()?.is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("{} timed out", program.display());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Ok(reader.join().unwrap_or_default())
+}
+
 /// Runs a PowerShell snippet (used for the NetAdapter cmdlets, which have no simple API).
 pub fn powershell(script: &str) -> Result<String> {
     let out = hidden("powershell.exe")

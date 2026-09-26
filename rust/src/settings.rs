@@ -107,6 +107,8 @@ impl PopupPosition {
 pub struct Settings {
     pub model: String,
     pub reasoning: Reasoning,
+    /// Tokens of context; [`CONTEXT_AUTO`] (0) = let llama.cpp fit the largest that fits.
+    #[serde(serialize_with = "ser_context")]
     pub context: u32,
     pub listen_host: String,
     pub port: u16,
@@ -131,7 +133,7 @@ impl Default for Settings {
         Settings {
             model: DEFAULT_MODEL.into(),
             reasoning: Reasoning::Low,
-            context: 32768,
+            context: CONTEXT_AUTO,
             listen_host: "127.0.0.1".into(),
             port: 8080,
             api_key: String::new(),
@@ -182,6 +184,17 @@ pub const KEYS: [&str; 18] = [
     "GpuIgnore",
     "AutoUpdate",
 ];
+
+/// `Context` value meaning "as much as fits" (llama.cpp's --fit picks it).
+pub const CONTEXT_AUTO: u32 = 0;
+
+fn ser_context<S: serde::Serializer>(c: &u32, ser: S) -> Result<S::Ok, S::Error> {
+    if *c == CONTEXT_AUTO {
+        ser.serialize_str("auto")
+    } else {
+        ser.serialize_u32(*c)
+    }
+}
 
 pub fn is_valid_model_name(s: &str) -> bool {
     let ok_chars = s
@@ -269,10 +282,17 @@ impl Settings {
                     .and_then(Reasoning::parse)
                     .map(|r| s.reasoning = r)
                     .is_some(),
-                "Context" => as_u64(v)
-                    .filter(|c| (512..=1_048_576).contains(c))
-                    .map(|c| s.context = c as u32)
-                    .is_some(),
+                "Context" => (if v
+                    .as_str()
+                    .is_some_and(|t| t.trim().eq_ignore_ascii_case("auto"))
+                {
+                    Some(0)
+                } else {
+                    as_u64(v)
+                })
+                .filter(|c| *c == 0 || (512..=1_048_576).contains(c))
+                .map(|c| s.context = c as u32)
+                .is_some(),
                 "ListenHost" => v
                     .as_str()
                     .filter(|h| *h == "127.0.0.1" || *h == "0.0.0.0")
@@ -495,11 +515,13 @@ mod more_tests {
         assert_eq!(accepted("Context", "1048576").context, 1_048_576);
         assert_eq!(accepted("Context", "32768.0").context, 32768);
         assert_eq!(accepted("Context", "\" 8192 \"").context, 8192);
+        assert_eq!(accepted("Context", "\"auto\"").context, CONTEXT_AUTO);
+        assert_eq!(accepted("Context", "\"AUTO\"").context, CONTEXT_AUTO);
+        assert_eq!(accepted("Context", "0").context, CONTEXT_AUTO);
         for bad in [
             "511",
             "1048577",
             "-1",
-            "0",
             "1.5",
             "true",
             "null",
@@ -670,6 +692,19 @@ mod more_tests {
     }
 
     #[test]
+    fn context_serializes_as_auto_or_a_number() {
+        let v: serde_json::Value = serde_json::from_str(&Settings::default().to_json()).unwrap();
+        assert_eq!(v["Context"], "auto");
+        let fixed = Settings {
+            context: 65536,
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&fixed.to_json()).unwrap();
+        assert_eq!(v["Context"], 65536);
+        assert_eq!(Settings::from_json(&fixed.to_json()).0.context, 65536);
+    }
+
+    #[test]
     fn keys_are_case_insensitive_like_powershell() {
         let (s, w) =
             Settings::from_json(r#"{"model":"x.gguf","CONTEXT":8192,"listenhost":"0.0.0.0"}"#);
@@ -745,7 +780,6 @@ mod more_tests {
         assert!(ps.contains(&format!("$DefaultModel = '{}'", d.model)));
         for (k, v) in [
             ("Reasoning", "'low'"),
-            ("Context", "32768"),
             ("ListenHost", "'127.0.0.1'"),
             ("Port", "8080"),
             ("DetectionMode", "'Both'"),
@@ -761,6 +795,9 @@ mod more_tests {
             assert!(line.contains(v), "{k}: {line}");
         }
         assert_eq!(serde_json::to_value(d.reasoning).unwrap(), "low");
+        // Context is the one deliberate difference: auto-fit instead of a fixed 32K
+        assert_eq!(d.context, CONTEXT_AUTO);
+        assert!(ps.contains("Context          = 32768"));
     }
 
     #[test]
@@ -852,7 +889,7 @@ mod more_tests {
                 prop_assert!(is_valid_api_key(&s.api_key));
                 prop_assert!(s.listen_host == "127.0.0.1" || s.listen_host == "0.0.0.0");
                 prop_assert!(s.port >= 1024);
-                prop_assert!((512..=1_048_576).contains(&s.context));
+                prop_assert!(s.context == CONTEXT_AUTO || (512..=1_048_576).contains(&s.context));
                 let (again, w) = Settings::from_json(&s.to_json());
                 prop_assert!(w.is_empty(), "{:?}", w);
                 prop_assert_eq!(again, s);

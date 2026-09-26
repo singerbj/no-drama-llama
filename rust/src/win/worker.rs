@@ -5,15 +5,19 @@
 use super::gpu::{self, GpuSampler};
 use super::libraries::{self, Scanner};
 use super::procs::Procs;
-use super::{install, net, sys, updater};
+use super::{install, models, net, probe, sys, updater};
 use crate::detect::{self, GameHit, GpuDetector, Scan};
+use crate::hardware::Backend;
 use crate::paths::Paths;
+use crate::server::ServerCaps;
 use crate::settings::{self, Settings};
 use crate::state::{Action, Inputs, Machine, Popup, Status};
 use crate::{log, server};
 use std::os::windows::process::CommandExt;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 const POLL: Duration = Duration::from_secs(5);
@@ -38,7 +42,33 @@ pub enum Cmd {
         result: Result<Option<(crate::update::Release, semver::Version)>, String>,
     },
     UpdateApplied(Result<semver::Version, String>),
+    /// Download a catalog model; `switch` = use it once it's there.
+    DownloadModel {
+        id: String,
+        switch: bool,
+    },
+    CancelDownload,
+    DownloadFinished {
+        id: String,
+        switch: bool,
+        result: Result<(), String>,
+    },
     Exit,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct DownloadInfo {
+    pub id: String,
+    pub label: String,
+    pub done: u64,
+    pub total: u64,
+}
+
+struct Download {
+    model: crate::catalog::CatalogModel,
+    done: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
+    cancel: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -50,6 +80,13 @@ pub struct Snapshot {
     pub game_process: Option<String>,
     pub start_with_windows: bool,
     pub update: UpdateState,
+    /// GPU memory + RAM, for the model catalog's "fits your GPU" notes
+    pub pc: crate::catalog::Machine,
+    pub gpu_name: Option<String>,
+    pub backend: Option<Backend>,
+    pub download: Option<DownloadInfo>,
+    /// Context llama.cpp settled on (auto mode), once the server is up
+    pub n_ctx: Option<u32>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -82,6 +119,14 @@ pub struct Worker {
     start_with_windows: bool,
     update: UpdateState,
     last_update_check: Option<Instant>,
+    caps: ServerCaps,
+    pc: crate::catalog::Machine,
+    gpu_name: Option<String>,
+    backend: Option<Backend>,
+    download: Option<Download>,
+    n_ctx: Option<u32>,
+    /// Hugging Face base URL (a local server in tests)
+    pub(crate) hf_base: String,
     tx_ui: Sender<UiMsg>,
     tx_self: Sender<Cmd>,
 }
@@ -107,6 +152,19 @@ impl Worker {
             scan.exes.len()
         );
         let gpu = GpuSampler::new();
+        let caps = if p.server_exe.exists() {
+            probe::server_caps(&p.server_exe)
+        } else {
+            ServerCaps::default()
+        };
+        let (pc, gpu_name) = probe::machine(&p.server_exe);
+        log!(
+            "hardware: {} · RAM {:.0} GB · llama.cpp fits automatically: {}",
+            gpu_name.as_deref().unwrap_or("no GPU found"),
+            crate::hardware::gib(pc.ram),
+            caps.fit
+        );
+        let p_for_probe = p.clone();
         if gpu.is_none() {
             log!("GPU counters unavailable - GPU-based detection off");
         }
@@ -125,6 +183,13 @@ impl Worker {
             start_with_windows: install::task_enabled(),
             update: UpdateState::None,
             last_update_check: None,
+            caps,
+            pc,
+            gpu_name,
+            backend: install::installed_backend(&p_for_probe),
+            download: None,
+            n_ctx: None,
+            hf_base: models::HF.to_string(),
             tx_ui,
             tx_self,
         }
@@ -149,7 +214,12 @@ impl Worker {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             self.tick();
-            next = Instant::now() + POLL;
+            next = Instant::now()
+                + if self.download.is_some() {
+                    Duration::from_secs(1)
+                } else {
+                    POLL
+                };
         }
     }
 
@@ -289,9 +359,87 @@ impl Worker {
                     self.popup("Update failed", e, crate::state::Tone::Error);
                 }
             },
+            Cmd::DownloadModel { id, switch } => self.start_download(&id, switch),
+            Cmd::CancelDownload => {
+                if let Some(d) = &self.download {
+                    d.cancel.store(true, Ordering::Relaxed);
+                }
+            }
+            Cmd::DownloadFinished { id, switch, result } => {
+                let model = self
+                    .download
+                    .take()
+                    .map(|d| d.model)
+                    .or_else(|| crate::catalog::find(&id));
+                match (result, model) {
+                    (Ok(()), Some(m)) => {
+                        log!("downloaded {}", m.id);
+                        if switch {
+                            let file = m.primary_file();
+                            self.handle(Cmd::Edit(Box::new(move |s| s.model = file)));
+                        }
+                        self.popup("Model downloaded", m.label(), crate::state::Tone::Running);
+                    }
+                    (Err(e), _) if e == net::CANCELLED => {
+                        log!("download of {id} cancelled");
+                        self.popup(
+                            "Download cancelled",
+                            "The partial file is kept - download again to resume",
+                            crate::state::Tone::Off,
+                        );
+                    }
+                    (Err(e), _) => {
+                        log!("download of {id} failed: {e}");
+                        self.popup("Download failed", e, crate::state::Tone::Error);
+                    }
+                    (Ok(()), None) => {}
+                }
+            }
             Cmd::Exit => {}
         }
         false
+    }
+
+    fn start_download(&mut self, id: &str, switch: bool) {
+        if self.download.is_some() {
+            return; // one at a time
+        }
+        let Some(model) = crate::catalog::find(id) else {
+            return;
+        };
+        let d = Download {
+            model: model.clone(),
+            done: Arc::new(AtomicU64::new(0)),
+            total: Arc::new(AtomicU64::new(model.size)),
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        let (done, total, cancel) = (d.done.clone(), d.total.clone(), d.cancel.clone());
+        let (tx, dir, base, id) = (
+            self.tx_self.clone(),
+            self.p.models_dir.clone(),
+            self.hf_base.clone(),
+            id.to_string(),
+        );
+        log!("downloading {}", model.id);
+        self.download = Some(d);
+        std::thread::spawn(move || {
+            let r = models::download_model(
+                &base,
+                &model,
+                &dir,
+                |d, t| {
+                    done.store(d, Ordering::Relaxed);
+                    total.store(t, Ordering::Relaxed);
+                },
+                Some(&cancel),
+            )
+            .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Cmd::DownloadFinished {
+                id,
+                switch,
+                result: r,
+            });
+        });
     }
 
     fn check_updates(&mut self, manual: bool) {
@@ -331,13 +479,14 @@ impl Worker {
         let log_file = std::fs::File::create(&self.p.server_log)
             .map_err(|e| format!("can't write server.log: {e}"))?;
         sys::hidden(&self.p.server_exe)
-            .args(server::server_args(&self.s, &model))
+            .args(server::server_args(&self.s, &model, self.caps))
             .current_dir(&self.p.llama_dir)
             .stdout(Stdio::null())
             .stderr(log_file)
             .creation_flags(sys::CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("can't start llama-server: {e}"))?;
+        self.n_ctx = None;
         log!(
             "started server ({}, reasoning={}, ctx={}, host={})",
             self.s.model,
@@ -418,7 +567,8 @@ impl Worker {
             resume_after: Duration::from_secs(self.s.resume_after_sec.into()),
             server_running: running,
             server_ready: running && net::is_healthy(&self.health, &server::health_url(&self.s)),
-            model_exists: self.p.model(&self.s.model).exists(),
+            model_exists: self.p.model(&self.s.model).exists()
+                && crate::paths::missing_parts(&self.p.models_dir, &self.s.model).is_empty(),
             server_exe_exists: self.p.server_exe.exists(),
             model_name: self.s.model.clone(),
         };
@@ -440,6 +590,14 @@ impl Worker {
         for l in &out.logs {
             log!("{l}");
         }
+        if *self.machine.status() == Status::Running && self.n_ctx.is_none() {
+            self.n_ctx = std::fs::read_to_string(&self.p.server_log)
+                .ok()
+                .and_then(|t| crate::hardware::parse_n_ctx(&t));
+            if let Some(n) = self.n_ctx {
+                log!("llama.cpp context: {n} tokens");
+            }
+        }
         if let (Some(p), true) = (out.popup, self.s.popups) {
             let _ = self.tx_ui.send(UiMsg::Popup(p));
         }
@@ -456,14 +614,28 @@ impl Worker {
 
     fn send_snapshot(&self) {
         let status = self.machine.status().clone();
+        let mut status_text = status.text(&crate::state::model_short(&self.s.model));
+        if let (Status::Running, Some(n)) = (&status, self.n_ctx) {
+            status_text += &format!(" · {}K context", n / 1024);
+        }
         let snap = Snapshot {
-            status_text: status.text(&crate::state::model_short(&self.s.model)),
+            status_text,
             status,
             settings: self.s.clone(),
             models: self.p.list_models(),
             game_process: self.machine.game().and_then(|g| g.process.clone()),
             start_with_windows: self.start_with_windows,
             update: self.update.clone(),
+            pc: self.pc,
+            gpu_name: self.gpu_name.clone(),
+            backend: self.backend,
+            download: self.download.as_ref().map(|d| DownloadInfo {
+                id: d.model.id.clone(),
+                label: d.model.label(),
+                done: d.done.load(Ordering::Relaxed),
+                total: d.total.load(Ordering::Relaxed).max(d.model.size),
+            }),
+            n_ctx: self.n_ctx,
         };
         let _ = self.tx_ui.send(UiMsg::State(Box::new(snap)));
     }

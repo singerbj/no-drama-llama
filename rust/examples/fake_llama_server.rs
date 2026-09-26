@@ -3,6 +3,8 @@
 //! * Named `llama-server(.exe)`: records its arguments to `argv.txt` next to itself, listens
 //!   on `--port`, answers `/health` with 503 for `FAKE_READY_MS` (default 400 ms) then 200.
 //!   If a file named `crash` exists next to it, exits with code 1 right away.
+//!   `--help` advertises `--fit`; `--list-devices` reports one 16 GiB GPU; on start it logs
+//!   `n_ctx = 65536` to stderr like llama.cpp does after fitting.
 //! * Any other name (a "game"): just sleeps until killed.
 
 use std::io::{BufRead, BufReader, Write};
@@ -18,12 +20,21 @@ fn main() {
             std::thread::sleep(Duration::from_secs(3600));
         }
     }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help") {
+        println!("-ngl,   --gpu-layers N\n-fit,   --fit [on|off]                  whether to adjust unset arguments to fit in device memory");
+        return;
+    }
+    if args.iter().any(|a| a == "--list-devices") {
+        println!("Available devices:\n  Vulkan0: Fake GPU 9000 (16384 MiB, 15000 MiB free)");
+        return;
+    }
     if dir.join("crash").exists() {
         eprintln!("fake llama-server: crashing on purpose");
         std::process::exit(1);
     }
-    let args: Vec<String> = std::env::args().skip(1).collect();
     std::fs::write(dir.join("argv.txt"), args.join("\n")).unwrap();
+    eprintln!("llama_context: n_ctx         = 65536");
     let port = args
         .iter()
         .position(|a| a == "--port")

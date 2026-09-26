@@ -5,6 +5,7 @@ use anyhow::{bail, Context, Result};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use ureq::tls::{TlsConfig, TlsProvider};
 
@@ -59,7 +60,19 @@ pub fn is_healthy(agent: &ureq::Agent, url: &str) -> bool {
 
 /// Downloads `url` to `dest`, resuming a partial file. `progress(done, total)` is called
 /// about once a second.
-pub fn download(url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> Result<()> {
+pub fn download(url: &str, dest: &Path, progress: impl FnMut(u64, u64)) -> Result<()> {
+    download_cancellable(url, dest, progress, None)
+}
+
+pub const CANCELLED: &str = "download cancelled";
+
+/// Like [`download`], stopping (and keeping the partial file for resuming) when `cancel` is set.
+pub fn download_cancellable(
+    url: &str,
+    dest: &Path,
+    mut progress: impl FnMut(u64, u64),
+    cancel: Option<&AtomicBool>,
+) -> Result<()> {
     // No global timeout: a 17 GB model takes a while. Stalls are caught by the body timeout.
     let cfg = ureq::Agent::config_builder()
         .tls_config(
@@ -102,6 +115,10 @@ pub fn download(url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> R
     let mut buf = vec![0u8; 1 << 20];
     let mut last = Instant::now();
     loop {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            file.flush()?;
+            bail!(CANCELLED);
+        }
         let n = reader
             .read(&mut buf)
             .context("download interrupted - run it again to resume")?;

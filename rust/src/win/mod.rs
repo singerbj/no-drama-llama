@@ -3,8 +3,10 @@
 pub mod gpu;
 pub mod install;
 pub mod libraries;
+pub mod models;
 pub mod net;
 pub mod osd;
+pub mod probe;
 pub mod procs;
 pub mod sys;
 pub mod tray;
@@ -54,6 +56,33 @@ pub fn main() -> i32 {
             print!("{}", cli::HELP);
             0
         }
+        Command::Models => {
+            let _ = sys::console(false);
+            let p = Paths::system();
+            let (pc, gpu) = probe::machine(&p.server_exe);
+            println!(
+                "GPU: {} · RAM: {:.0} GB",
+                gpu.as_deref()
+                    .unwrap_or("unknown (install first to detect AMD/Intel GPUs)"),
+                crate::hardware::gib(pc.ram)
+            );
+            let rec = crate::catalog::recommend(&pc).map(|m| m.id);
+            for m in crate::catalog::catalog() {
+                let star = if rec.as_deref() == Some(m.id.as_str()) {
+                    "  <- recommended"
+                } else {
+                    ""
+                };
+                println!(
+                    "  {:<34} {:>6.1} GB  {}{star}",
+                    m.id,
+                    m.size as f64 / 1e9,
+                    crate::catalog::fit_note(&m, &pc)
+                );
+            }
+            println!("\nInstall one with: no-drama-llama.exe install --model <id>  (or from the tray: Settings > Model)");
+            0
+        }
         Command::Version => {
             let _ = sys::console(false);
             println!("no-drama-llama {}", env!("CARGO_PKG_VERSION"));
@@ -77,6 +106,11 @@ pub fn main() -> i32 {
                 skip_wol: a.skip_wol,
                 llama_tag: a.llama_tag,
                 update_llama: a.update_llama,
+                model: a.model,
+                backend: a
+                    .backend
+                    .as_deref()
+                    .and_then(crate::hardware::Backend::parse),
             };
             let code = console_result(install::install(&opts));
             pause_if_own_console(own);

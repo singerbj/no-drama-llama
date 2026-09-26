@@ -2,8 +2,10 @@
 //! way while you play. The platform-independent logic lives here (and is unit-tested on any
 //! OS); the Windows tray app, detection probes, installer and updater live in [`win`].
 
+pub mod catalog;
 pub mod cli;
 pub mod detect;
+pub mod hardware;
 pub mod log;
 pub mod paths;
 pub mod server;

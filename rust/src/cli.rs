@@ -7,6 +7,10 @@ pub struct InstallArgs {
     pub skip_wol: bool,
     pub llama_tag: Option<String>,
     pub update_llama: bool,
+    /// Catalog id (`qwen3.8-27b:UD-Q4_K_XL`), or None = pick for this PC
+    pub model: Option<String>,
+    /// vulkan | cuda12 | cuda13, or None = pick for this PC
+    pub backend: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +26,7 @@ pub enum Command {
         yes: bool,
     },
     Update,
+    Models,
     Version,
     Help,
 }
@@ -35,7 +40,10 @@ Commands:
   (none)       Install if needed, otherwise start the tray app
   run          Start the tray app
   install      Install or upgrade (needs admin; asks for it)
-      --skip-model            don't download the default model
+      --model <id|auto|none>  model to download (default: auto = best for your GPU;
+                              ids: `no-drama-llama.exe models`)
+      --skip-model            same as --model none
+      --backend <name>        llama.cpp build: auto (default), vulkan, cuda12, cuda13
       --skip-power-settings   leave the power plan alone
       --skip-wake-on-lan      leave network adapter wake settings alone
       --llama-cpp-tag <tag>   install this llama.cpp build (default: latest)
@@ -44,6 +52,7 @@ Commands:
       --keep-models           move models to Downloads first
       --yes                   don't ask
   update       Check for a new version and install it
+  models       List downloadable models and what fits this PC
   version      Print the version
 ";
 
@@ -78,6 +87,35 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             while let Some(f) = flags.next() {
                 match f {
                     "--skip-model" => a.skip_model = true,
+                    "--model" => {
+                        let m = flags
+                            .next()
+                            .ok_or("--model needs a model id, auto or none")?;
+                        match m.to_ascii_lowercase().as_str() {
+                            "none" => a.skip_model = true,
+                            "auto" => a.model = None,
+                            _ if crate::catalog::find(m).is_some() => a.model = Some(m.to_string()),
+                            _ => {
+                                return Err(format!(
+                                    "unknown model '{m}' (see `no-drama-llama.exe models`)"
+                                ))
+                            }
+                        }
+                    }
+                    "--backend" => {
+                        let b = flags
+                            .next()
+                            .ok_or("--backend needs auto, vulkan, cuda12 or cuda13")?;
+                        if b.eq_ignore_ascii_case("auto") {
+                            a.backend = None;
+                        } else if crate::hardware::Backend::parse(b).is_some() {
+                            a.backend = Some(b.to_ascii_lowercase());
+                        } else {
+                            return Err(format!(
+                                "unknown backend '{b}' (auto, vulkan, cuda12, cuda13)"
+                            ));
+                        }
+                    }
                     "--skip-power-settings" => a.skip_power = true,
                     "--skip-wake-on-lan" => a.skip_wol = true,
                     "--update-llama-cpp" => a.update_llama = true,
@@ -111,6 +149,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             Ok(Command::Uninstall { keep_models, yes })
         }
         "update" if rest.is_empty() => Ok(Command::Update),
+        "models" if rest.is_empty() => Ok(Command::Models),
         "version" | "--version" | "-V" if rest.is_empty() => Ok(Command::Version),
         "help" | "--help" | "-h" | "/?" => Ok(Command::Help),
         other => Err(format!("unknown command '{other}' (see --help)")),
@@ -134,6 +173,12 @@ pub fn install_args_string(a: &InstallArgs) -> String {
     }
     if let Some(t) = &a.llama_tag {
         s += &format!(" --llama-cpp-tag {t}");
+    }
+    if let Some(m) = &a.model {
+        s += &format!(" --model {m}");
+    }
+    if let Some(b) = &a.backend {
+        s += &format!(" --backend {b}");
     }
     s
 }
@@ -208,6 +253,13 @@ mod tests {
                 llama_tag: Some("b6500".into()),
                 update_llama: true,
                 skip_model: true,
+                model: None,
+                backend: Some("cuda13".into()),
+            },
+            InstallArgs {
+                model: Some("qwen3.8-27b:UD-IQ3_XXS".into()),
+                backend: Some("vulkan".into()),
+                ..Default::default()
             },
         ];
         for a in cases {
@@ -215,6 +267,35 @@ mod tests {
             let parsed = parse(s.split(' ').map(str::to_owned)).unwrap();
             assert_eq!(parsed, Command::Install(a), "{s}");
         }
+    }
+
+    #[test]
+    fn model_and_backend_options() {
+        let a = |args: &[&str]| match p(args) {
+            Ok(Command::Install(a)) => a,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            a(&["install", "--model", "qwen3.8-27b:UD-Q4_K_XL"])
+                .model
+                .as_deref(),
+            Some("qwen3.8-27b:UD-Q4_K_XL")
+        );
+        assert!(a(&["install", "--model", "none"]).skip_model);
+        assert_eq!(a(&["install", "--model", "auto"]).model, None);
+        assert_eq!(
+            a(&["install", "--backend", "CUDA12"]).backend.as_deref(),
+            Some("cuda12")
+        );
+        assert_eq!(a(&["install", "--backend", "auto"]).backend, None);
+        assert!(p(&["install", "--model", "gpt-9"])
+            .unwrap_err()
+            .contains("unknown model"));
+        assert!(p(&["install", "--model"]).is_err());
+        assert!(p(&["install", "--backend", "rocm"])
+            .unwrap_err()
+            .contains("unknown backend"));
+        assert_eq!(p(&["models"]), Ok(Command::Models));
     }
 
     #[test]
@@ -252,6 +333,9 @@ mod tests {
     #[test]
     fn help_mentions_every_command_and_flag() {
         for w in [
+            "models",
+            "--model",
+            "--backend",
             "run",
             "install",
             "uninstall",
@@ -282,8 +366,13 @@ mod props {
         }
 
         #[test]
-        fn install_args_always_round_trip(skip_model: bool, skip_power: bool, skip_wol: bool, update_llama: bool, tag in prop::option::of("[a-z0-9._-]{1,12}")) {
-            let a = InstallArgs { skip_model, skip_power, skip_wol, update_llama, llama_tag: tag };
+        fn install_args_always_round_trip(
+            skip_model: bool, skip_power: bool, skip_wol: bool, update_llama: bool,
+            tag in prop::option::of("[a-z0-9._-]{1,12}"),
+            model in prop::option::of(prop::sample::select(crate::catalog::catalog().into_iter().map(|m| m.id).collect::<Vec<_>>())),
+            backend in prop::option::of(prop::sample::select(vec!["vulkan".to_string(), "cuda12".to_string(), "cuda13".to_string()])),
+        ) {
+            let a = InstallArgs { skip_model, skip_power, skip_wol, update_llama, llama_tag: tag, model, backend };
             let s = install_args_string(&a);
             prop_assert_eq!(parse(s.split(' ').map(str::to_owned)), Ok(Command::Install(a)));
         }

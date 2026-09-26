@@ -2,8 +2,10 @@
 //! real work happens on the worker thread; this thread only renders snapshots and forwards
 //! clicks, so the menu never freezes.
 
+use super::worker::DownloadInfo;
 use super::worker::{Cmd, Snapshot, UiMsg, UpdateState, Worker};
 use super::{osd, sys};
+use crate::catalog;
 use crate::log;
 use crate::paths::{self, Paths};
 use crate::settings::{DetectionMode, PopupPosition, Reasoning, Settings};
@@ -40,6 +42,9 @@ enum Act {
     EditSettings,
     OpenFolder,
     ViewLog,
+    Download(String),
+    CancelDownload,
+    OpenModels,
     Exit,
 }
 
@@ -79,8 +84,11 @@ struct Ui {
     open: MenuItem,
     restart: MenuItem,
     models: Submenu,
-    models_shown: Vec<(String, u64)>,
+    model_key: String,
     model_checks: Vec<(CheckMenuItem, String)>,
+    model_items: Vec<MenuItem>,
+    download_item: Option<MenuItem>,
+    gpu_info: MenuItem,
     not_game: MenuItem,
     update: MenuItem,
     gpu_only: Vec<Submenu>,
@@ -140,8 +148,11 @@ fn build() -> Ui {
         open: MenuItem::new("Open chat", true, None),
         restart: MenuItem::new("Restart server", true, None),
         models: Submenu::new("Model", true),
-        models_shown: Vec::new(),
+        model_key: String::new(),
         model_checks: Vec::new(),
+        model_items: Vec::new(),
+        download_item: None,
+        gpu_info: MenuItem::new("GPU: detecting...", false, None),
         not_game: MenuItem::new("Not a game - ignore this app", false, None),
         update: MenuItem::new("Check for updates", true, None),
         gpu_only: Vec::new(),
@@ -175,6 +186,8 @@ fn build() -> Ui {
 
     let settings = Submenu::new("Settings", true);
     menu.add(&settings);
+    settings.add(&ui.gpu_info.clone());
+    sep(&settings);
     settings.add(&ui.models);
 
     let reasoning = Submenu::new("Reasoning", true);
@@ -189,6 +202,13 @@ fn build() -> Ui {
     }
     let ctx = Submenu::new("Context length", true);
     settings.add(&ctx);
+    ui.check(
+        &ctx,
+        "Auto (largest that fits your GPU)",
+        edit(|s| s.context = crate::settings::CONTEXT_AUTO),
+        |n| n.settings.context == crate::settings::CONTEXT_AUTO,
+    );
+    sep(&ctx);
     for c in [8192u32, 16384, 32768, 65536, 131072] {
         ui.check(
             &ctx,
@@ -341,7 +361,12 @@ impl Ui {
             let _ = tray.set_icon(self.icons.get(&tone).cloned());
             self.tone = Some(tone);
         }
-        let tip: String = format!("{}: {}", paths::APP_NAME, snap.status_text)
+        let dl = snap
+            .download
+            .as_ref()
+            .map(|d| format!(" · downloading {:.0}%", percent(d)))
+            .unwrap_or_default();
+        let tip: String = format!("{}: {}{dl}", paths::APP_NAME, snap.status_text)
             .chars()
             .take(127)
             .collect();
@@ -381,37 +406,115 @@ impl Ui {
         for (item, pred) in &self.checks {
             item.set_checked(pred(&snap));
         }
-        if snap.models != self.models_shown {
-            while self.models.remove_at(0).is_some() {}
-            for (item, _) in self.model_checks.drain(..) {
-                self.actions.remove(item.id());
-            }
-            for (name, size) in &snap.models {
-                let n = name.clone();
-                let i = CheckMenuItem::new(
-                    format!("{name}  ({:.1} GB)", *size as f64 / 1e9),
-                    true,
-                    false,
-                    None,
-                );
-                self.actions
-                    .insert(i.id().clone(), edit(move |s| s.model = n.clone()));
-                let _ = self.models.append(&i);
-                self.model_checks.push((i, name.clone()));
-            }
-            if snap.models.is_empty() {
-                let _ = self.models.append(&MenuItem::new(
-                    "(no .gguf files in C:\\LLM\\models)",
-                    false,
-                    None,
-                ));
-            }
-            self.models_shown = snap.models.clone();
+        let key = format!(
+            "{:?}|{:?}|{:?}",
+            snap.models,
+            snap.pc,
+            snap.download.as_ref().map(|d| &d.id)
+        );
+        if key != self.model_key {
+            self.rebuild_models(&snap);
+            self.model_key = key;
         }
         for (item, name) in &self.model_checks {
             item.set_checked(snap.settings.model == *name);
         }
+        if let (Some(item), Some(d)) = (&self.download_item, &snap.download) {
+            item.set_text(format!(
+                "Downloading {}  {:.0}%  -  click to cancel",
+                d.label,
+                percent(d)
+            ));
+        }
+        let gpu = snap
+            .gpu_name
+            .as_deref()
+            .unwrap_or("not detected (runs on the CPU)");
+        let backend = snap
+            .backend
+            .map(|b| format!("  ·  llama.cpp {}", b.label()))
+            .unwrap_or_default();
+        self.gpu_info.set_text(format!("GPU: {gpu}{backend}"));
         self.snap = Some(snap);
+    }
+
+    fn rebuild_models(&mut self, snap: &Snapshot) {
+        while self.models.remove_at(0).is_some() {}
+        for (item, _) in self.model_checks.drain(..) {
+            self.actions.remove(item.id());
+        }
+        for item in self.model_items.drain(..) {
+            self.actions.remove(item.id());
+        }
+        self.download_item = None;
+        for (name, size) in &snap.models {
+            let n = name.clone();
+            let i = CheckMenuItem::new(
+                format!("{name}  ({:.1} GB)", *size as f64 / 1e9),
+                true,
+                false,
+                None,
+            );
+            self.actions
+                .insert(i.id().clone(), edit(move |s| s.model = n.clone()));
+            let _ = self.models.append(&i);
+            self.model_checks.push((i, name.clone()));
+        }
+        if snap.models.is_empty() {
+            let _ = self.models.append(&MenuItem::new(
+                "(no models yet - download one below)",
+                false,
+                None,
+            ));
+        }
+        sep(&self.models);
+        let dl = Submenu::new("Download a model", true);
+        let rec = catalog::recommend(&snap.pc).map(|m| m.id);
+        for m in catalog::catalog() {
+            let installed = snap
+                .models
+                .iter()
+                .any(|(n, _)| n.eq_ignore_ascii_case(&m.primary_file()));
+            let fit = catalog::fit(&m, &snap.pc);
+            let star = if rec.as_deref() == Some(m.id.as_str()) {
+                "   ★ recommended"
+            } else {
+                ""
+            };
+            let mut text = format!(
+                "{}  -  {}{star}",
+                m.label(),
+                catalog::fit_note(&m, &snap.pc)
+            );
+            let (act, enabled) = match &snap.download {
+                Some(d) if d.id == m.id => {
+                    text = format!(
+                        "Downloading {}  {:.0}%  -  click to cancel",
+                        d.label,
+                        percent(d)
+                    );
+                    (Act::CancelDownload, true)
+                }
+                Some(_) => (Act::Download(m.id.clone()), false),
+                None if installed => {
+                    text += "   (installed)";
+                    (Act::Download(m.id.clone()), false)
+                }
+                None => (Act::Download(m.id.clone()), fit != catalog::Fit::TooBig),
+            };
+            let item = MenuItem::new(&text, enabled, None);
+            if matches!(act, Act::CancelDownload) {
+                self.download_item = Some(item.clone());
+            }
+            self.actions.insert(item.id().clone(), act);
+            let _ = dl.append(&item);
+            self.model_items.push(item);
+        }
+        let _ = self.models.append(&dl);
+        let open = MenuItem::new("Open models folder", true, None);
+        self.actions.insert(open.id().clone(), Act::OpenModels);
+        let _ = self.models.append(&open);
+        self.model_items.push(open);
     }
 
     fn popup(&self, title: &str, sub: &str, tone: Tone) {
@@ -471,7 +574,30 @@ impl Ui {
             Act::EditSettings => sys::open_in_notepad(&p.settings),
             Act::OpenFolder => sys::open_unelevated(&p.root),
             Act::ViewLog => sys::open_in_notepad(&p.log),
+            Act::OpenModels => sys::open_unelevated(&p.models_dir),
+            Act::CancelDownload => send(Cmd::CancelDownload),
+            Act::Download(id) => {
+                if let Some(m) = catalog::find(&id) {
+                    let q = format!(
+                        "Download {}?\n\n{:.1} GB from Hugging Face. It keeps running in the background and switches over when it's done ({}).",
+                        m.label(),
+                        m.size as f64 / 1e9,
+                        self.snap.as_ref().map(|s| catalog::fit_note(&m, &s.pc)).unwrap_or("")
+                    );
+                    if sys::ask(&q) {
+                        send(Cmd::DownloadModel { id, switch: true });
+                    }
+                }
+            }
         }
+    }
+}
+
+fn percent(d: &DownloadInfo) -> f64 {
+    if d.total == 0 {
+        0.0
+    } else {
+        d.done as f64 * 100.0 / d.total as f64
     }
 }
 
