@@ -2,9 +2,10 @@
 
 use super::super::net;
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -14,6 +15,11 @@ enum Mode {
     /// Sends only half the body, then closes.
     Truncate,
     Status(u16),
+    /// Sends the body in 50 small pieces, `gap` apart.
+    Trickle(Duration),
+    /// Sends half the body, then holds the connection open without sending anything for `hold`.
+    /// Requests with a Range are served normally.
+    Stall(Duration),
 }
 
 struct Server {
@@ -26,45 +32,63 @@ fn serve(body: Vec<u8>, mode: Mode) -> Server {
     let url = format!("http://{}/file", l.local_addr().unwrap());
     let hits = Arc::new(AtomicUsize::new(0));
     let h = hits.clone();
+    let body = Arc::new(body);
     std::thread::spawn(move || {
         for s in l.incoming().flatten() {
             h.fetch_add(1, Ordering::SeqCst);
-            let mut s = s;
-            let mut reader = BufReader::new(s.try_clone().unwrap());
-            let mut range_start: Option<usize> = None;
-            loop {
-                let mut line = String::new();
-                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
-                    break;
-                }
-                let lower = line.to_ascii_lowercase();
-                if let Some(v) = lower.strip_prefix("range: bytes=") {
-                    range_start = v.trim().trim_end_matches('-').parse().ok();
-                }
-            }
-            let (status, part): (String, &[u8]) = match (mode, range_start) {
-                (Mode::Status(c), _) => (format!("{c} Nope"), b"nope"),
-                (Mode::Normal, Some(r)) if r >= body.len() => {
-                    ("416 Range Not Satisfiable".into(), b"")
-                }
-                (Mode::Normal, Some(r)) => ("206 Partial Content".into(), &body[r..]),
-                _ => ("200 OK".into(), &body[..]),
-            };
-            let send: &[u8] = if matches!(mode, Mode::Truncate) {
-                &part[..part.len() / 2]
-            } else {
-                part
-            };
-            let _ = write!(
-                s,
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                part.len()
-            );
-            let _ = s.write_all(send);
-            let _ = s.flush();
+            let body = body.clone();
+            std::thread::spawn(move || respond(s, &body, mode));
         }
     });
     Server { url, hits }
+}
+
+fn respond(mut s: TcpStream, body: &[u8], mode: Mode) {
+    let mut reader = BufReader::new(s.try_clone().unwrap());
+    let mut range_start: Option<usize> = None;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+            break;
+        }
+        let lower = line.to_ascii_lowercase();
+        if let Some(v) = lower.strip_prefix("range: bytes=") {
+            range_start = v.trim().trim_end_matches('-').parse().ok();
+        }
+    }
+    let ranges = matches!(mode, Mode::Normal | Mode::Stall(_));
+    let (status, part): (String, &[u8]) = match (mode, range_start) {
+        (Mode::Status(c), _) => (format!("{c} Nope"), b"nope"),
+        (_, Some(r)) if ranges && r >= body.len() => ("416 Range Not Satisfiable".into(), b""),
+        (_, Some(r)) if ranges => ("206 Partial Content".into(), &body[r..]),
+        _ => ("200 OK".into(), body),
+    };
+    let _ = write!(
+        s,
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        part.len()
+    );
+    match (mode, range_start) {
+        (Mode::Truncate, _) => {
+            let _ = s.write_all(&part[..part.len() / 2]);
+        }
+        (Mode::Trickle(gap), _) => {
+            for piece in part.chunks(part.len().div_ceil(50).max(1)) {
+                let _ = s.write_all(piece);
+                let _ = s.flush();
+                std::thread::sleep(gap);
+            }
+        }
+        (Mode::Stall(hold), None) => {
+            let _ = s.write_all(&part[..part.len() / 2]);
+            let _ = s.flush();
+            std::thread::sleep(hold);
+        }
+        _ => {
+            let _ = s.write_all(part);
+        }
+    }
+    let _ = s.flush();
 }
 
 fn body(n: usize) -> Vec<u8> {
@@ -141,6 +165,47 @@ fn truncated_body_is_an_error_but_keeps_progress() {
         kept > 0 && kept < data.len() as u64,
         "partial file kept for resuming ({kept})"
     );
+}
+
+#[test]
+fn slow_but_steady_download_is_not_cut_off() {
+    // 50 pieces 60 ms apart: about 3 s in total, far past the 500 ms stall threshold,
+    // but never more than 60 ms without data.
+    let data = body(100_000);
+    let srv = serve(data.clone(), Mode::Trickle(Duration::from_millis(60)));
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("f.part");
+    let t = Instant::now();
+    net::download_with_stall(&srv.url, &dest, |_, _| {}, None, Duration::from_millis(500)).unwrap();
+    assert!(t.elapsed() > Duration::from_secs(2), "{:?}", t.elapsed());
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+}
+
+#[test]
+fn stalled_download_is_abandoned_then_resumes() {
+    let data = body(100_000);
+    let srv = serve(data.clone(), Mode::Stall(Duration::from_secs(30)));
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("f.part");
+    let stall = Duration::from_millis(500);
+    let t = Instant::now();
+    let e = net::download_with_stall(&srv.url, &dest, |_, _| {}, None, stall).unwrap_err();
+    assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
+    let msg = format!("{e:#}");
+    assert!(
+        msg.contains("resume") && msg.contains("no data received"),
+        "{msg}"
+    );
+    let kept = std::fs::metadata(&dest).unwrap().len();
+    assert_eq!(
+        kept,
+        data.len() as u64 / 2,
+        "partial file kept for resuming"
+    );
+
+    net::download_with_stall(&srv.url, &dest, |_, _| {}, None, stall).unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), data);
+    assert_eq!(srv.hits.load(Ordering::SeqCst), 2);
 }
 
 #[test]
