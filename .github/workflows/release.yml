@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag like v2.0.0 (matching `version` in Cargo.toml) to publish:
-#   no-drama-llama.exe          the app (installs itself when run)
+#   no-drama-llama.exe          the app (installs itself when run), Authenticode-signed once SignPath is set up
 #   no-drama-llama.exe.minisig  minisign signature the in-app updater checks
 #   SHA256SUMS
 #
@@ -9,6 +9,9 @@ name: Release
 #   repository variable  UPDATE_PUBKEY       minisign public key (the base64 line of minisign.pub)
 #   environment secret   UPDATE_SIGNING_KEY  matching secret key file contents (unencrypted, `minisign -G -W`),
 #                        stored on the `release` environment, not the repository
+# Optional, for Windows code signing through SignPath Foundation (skipped until both are set):
+#   repository variable  SIGNPATH_ORGANIZATION_ID  (and optionally SIGNPATH_PROJECT_SLUG, SIGNPATH_SIGNING_POLICY_SLUG)
+#   environment secret   SIGNPATH_API_TOKEN        stored on the `codesign` environment
 on:
   push:
     tags: ['v*']
@@ -22,6 +25,8 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     defaults:
       run:
         shell: pwsh
@@ -61,12 +66,93 @@ jobs:
           if (-not $env:NDL_UPDATE_PUBKEY) { Write-Warning "UPDATE_PUBKEY is not set: this build can't auto-update (it will only tell users a new version exists)." }
           cargo build --release --locked
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: upload
         with:
           name: exe
           path: target/release/no-drama-llama.exe
 
-  publish:
+  # Authenticode signing, so SmartScreen shows a publisher instead of "Windows protected your PC".
+  # SignPath fetches the `exe` artifact straight from this run, signs it after a maintainer
+  # approves the request on signpath.io, and sends it back. Without SignPath set up this job
+  # passes the unsigned exe through.
+  codesign:
     needs: build
+    runs-on: windows-latest
+    # Holds SIGNPATH_API_TOKEN. Restrict it to `v*` tags; the approval happens on SignPath.
+    environment: codesign
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: exe
+          path: unsigned
+      - name: Is code signing set up?
+        id: config
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        run: |
+          if (-not $env:SIGNPATH_API_TOKEN -and -not $env:SIGNPATH_ORGANIZATION_ID) {
+            Write-Output "::warning::SignPath isn't set up - publishing an exe without a code signature (SmartScreen will warn)."
+            "enabled=false" >> $env:GITHUB_OUTPUT
+          } elseif (-not $env:SIGNPATH_API_TOKEN -or -not $env:SIGNPATH_ORGANIZATION_ID) {
+            throw "Set both SIGNPATH_ORGANIZATION_ID (variable) and SIGNPATH_API_TOKEN (secret on the codesign environment), or neither."
+          } else {
+            "enabled=true" >> $env:GITHUB_OUTPUT
+          }
+          # The artifact configuration only signs an exe whose ProductVersion is this version.
+          "version=$($env:GITHUB_REF_NAME -replace '^v', '')" >> $env:GITHUB_OUTPUT
+      - name: Sign on SignPath
+        if: steps.config.outputs.enabled == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'no-drama-llama' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ needs.build.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(steps.config.outputs.version) }}
+          wait-for-completion: true
+          # Leaves time to approve the signing request on signpath.io.
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: signed
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          node-version: 22
+      - name: Check the signed exe
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          # Same code as the CI build, with only a signature added...
+          node scripts/check-signed-exe.ts unsigned/no-drama-llama.exe signed/no-drama-llama.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # ...and a valid, timestamped signature from SignPath Foundation.
+          $sig = Get-AuthenticodeSignature signed/no-drama-llama.exe
+          if ($sig.Status -ne 'Valid') { throw "Authenticode signature is $($sig.Status): $($sig.StatusMessage)" }
+          if ($sig.SignerCertificate.GetNameInfo('SimpleName', $false) -ne 'SignPath Foundation') {
+            throw "Signed by '$($sig.SignerCertificate.Subject)', expected SignPath Foundation"
+          }
+          if (-not $sig.TimeStamperCertificate) { throw "The signature has no timestamp, so it would stop validating when the certificate expires" }
+          Write-Output "Signed by $($sig.SignerCertificate.Subject)"
+      - name: Pass the unsigned exe through
+        if: steps.config.outputs.enabled != 'true'
+        run: New-Item -ItemType Directory signed | Out-Null; Copy-Item unsigned/no-drama-llama.exe signed/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-exe
+          path: signed/no-drama-llama.exe
+
+  publish:
+    needs: codesign
     runs-on: ubuntu-latest
     # The signing key lives on this environment: give it required reviewers and restrict it to
     # `v*` tags (Settings -> Environments -> release) so a pushed tag alone can't ship an update.
@@ -78,7 +164,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: exe
+          name: release-exe
       - name: Sign for the in-app updater
         env:
           SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
