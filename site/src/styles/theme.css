@@ -1,33 +1,199 @@
-/* Starlight theme: warm "llama wool" neutrals with the tray's green as the accent. */
+/* Starlight on the No Drama Llama design system (design/): night-first warm wool neutrals, the
+   status tones as Starlight's colours, Google Sans Code for text and Unbounded for headings.
+   Rules from the system: no glows, no one-sided accent borders, code panels always dark. */
+@import '../../../design/tokens/fonts.css';
+@import '../../../design/tokens/colors.css';
+@import '../../../design/tokens/typography.css';
+@import '../../../design/tokens/spacing.css';
+
 :root {
-  --sl-color-accent-low: #0f2e1d;
-  --sl-color-accent: #22a55a;
-  --sl-color-accent-high: #b9f0cf;
-  --sl-color-white: #fbf7f2;
-  --sl-color-gray-1: #eee6dc;
-  --sl-color-gray-2: #c9bdb0;
-  --sl-color-gray-3: #9a8b7c;
-  --sl-color-gray-4: #635649;
-  --sl-color-gray-5: #3f352c;
-  --sl-color-gray-6: #2a231d;
-  --sl-color-black: #1a1612;
+  --sl-font: var(--font-sans);
+  --sl-font-mono: var(--font-mono);
+
+  --sl-color-white: var(--wool-50);
+  --sl-color-gray-1: var(--wool-100);
+  --sl-color-gray-2: var(--wool-200);
+  --sl-color-gray-3: var(--wool-400);
+  --sl-color-gray-4: var(--wool-500);
+  --sl-color-gray-5: #3a3129;
+  --sl-color-gray-6: var(--wool-850);
+  --sl-color-black: var(--wool-900);
+
+  --sl-color-accent-low: var(--mint-900);
+  --sl-color-accent: var(--mint-400);
+  --sl-color-accent-high: var(--mint-300);
+
+  --sl-color-green-low: var(--tone-running-soft);
+  --sl-color-green: var(--tone-running);
+  --sl-color-green-high: var(--mint-300);
+  --sl-color-orange-low: var(--tone-loading-soft);
+  --sl-color-orange: var(--tone-loading);
+  --sl-color-orange-high: var(--marigold-300);
+  --sl-color-blue-low: var(--tone-paused-soft);
+  --sl-color-blue: var(--tone-paused);
+  --sl-color-blue-high: var(--sky-300);
+  --sl-color-purple-low: var(--tone-game-soft);
+  --sl-color-purple: var(--tone-game);
+  --sl-color-purple-high: var(--grape-300);
+  --sl-color-red-low: var(--tone-error-soft);
+  --sl-color-red: var(--tone-error);
+  --sl-color-red-high: var(--tomato-300);
+
+  --sl-color-bg-nav: color-mix(in srgb, var(--bg) 85%, transparent);
+  --sl-color-bg-sidebar: var(--bg);
+  --sl-color-bg-inline-code: var(--surface-raised);
+  --sl-color-hairline: var(--border);
+  --sl-color-hairline-light: var(--border);
+  --sl-color-backdrop-overlay: color-mix(in srgb, var(--wool-950) 66%, transparent);
+  --sl-line-height-headings: var(--leading-tight);
 }
 
 :root[data-theme='light'] {
+  --sl-color-white: var(--wool-850);
+  --sl-color-gray-1: var(--wool-700);
+  --sl-color-gray-2: var(--wool-600);
+  --sl-color-gray-3: var(--wool-500);
+  --sl-color-gray-4: var(--wool-400);
+  --sl-color-gray-5: #e6dccf;
+  --sl-color-gray-6: var(--wool-100);
+  --sl-color-gray-7: var(--wool-50);
+  --sl-color-black: var(--wool-0);
+
   --sl-color-accent-low: #d4f5e1;
-  --sl-color-accent: #15803d;
-  --sl-color-accent-high: #0c4a24;
-  --sl-color-white: #1a1612;
-  --sl-color-gray-1: #2a231d;
-  --sl-color-gray-2: #3f352c;
-  --sl-color-gray-3: #635649;
-  --sl-color-gray-4: #9a8b7c;
-  --sl-color-gray-5: #c9bdb0;
-  --sl-color-gray-6: #eee6dc;
-  --sl-color-gray-7: #f7f2ec;
-  --sl-color-black: #fffdfa;
+  --sl-color-accent: var(--mint-600);
+  --sl-color-accent-high: #0c6b38;
+
+  --sl-color-green-high: var(--mint-600);
+  --sl-color-orange-high: var(--marigold-600);
+  --sl-color-blue-high: var(--sky-600);
+  --sl-color-purple-high: var(--grape-600);
+  --sl-color-red-high: var(--tomato-600);
+}
+
+/* ---------------------------------------------------------------- type */
+
+:is(h1, h2, h3):not(:where(.not-content *)) {
+  font-family: var(--font-display);
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-display);
+}
+
+h1#_top {
+  letter-spacing: var(--tracking-h1);
+}
+
+.sl-markdown-content h3:not(:where(.not-content *)) {
+  font-weight: var(--weight-semibold);
+}
+
+.site-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: var(--weight-bold);
+  color: var(--sl-color-white);
 }
 
 .site-title img {
   height: 2rem;
+}
+
+/* ---------------------------------------------------------------- nav */
+
+header.header {
+  backdrop-filter: blur(10px);
+}
+
+/* The current page: a mint-soft fill with a full border, like the settings window's tabs. */
+#starlight__sidebar a[aria-current='page'],
+#starlight__sidebar a[aria-current='page']:hover,
+#starlight__sidebar a[aria-current='page']:focus {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent) inset;
+  border-radius: var(--radius-sm);
+}
+
+#starlight__sidebar a:not([aria-current='page']):hover {
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+}
+
+/* Nested sidebar items lose their one-sided guide line. */
+#starlight__sidebar ul ul li {
+  border-inline-start: 0;
+}
+
+/* ---------------------------------------------------------------- content */
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--accent);
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  color: var(--accent-strong);
+}
+
+/* Tabs look like the settings window's: the selected one is a mint-soft fill with a full border,
+   not an underline. */
+starlight-tabs [role='tablist'] {
+  gap: 4px;
+  border-bottom: 0;
+}
+
+starlight-tabs .tab > [role='tab'] {
+  padding: 7px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  color: var(--text-muted);
+  transition: background var(--dur-fast);
+}
+
+starlight-tabs .tab > [role='tab']:hover {
+  background: var(--hover);
+}
+
+starlight-tabs .tab > [role='tab'][aria-selected='true'] {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent-strong);
+}
+
+/* Callouts: a full tone border and a tinted fill (like the app's banner), never a side bar. */
+.starlight-aside {
+  border: 1px solid var(--sl-color-asides-border);
+  border-radius: var(--radius-md);
+}
+
+.sl-markdown-content blockquote:not(:where(.not-content *)) {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-alt);
+  padding: 0.75rem 1rem;
+}
+
+.sl-markdown-content details:not(:where(.not-content *)) {
+  border: 1px solid var(--sl-details-border-color);
+  border-radius: var(--radius-xl);
+  padding: 0.25rem 1rem;
+}
+
+.sl-markdown-content :is(th, td):not(:where(.not-content *)) {
+  border-bottom-color: var(--border);
+}
+
+.sl-markdown-content th:not(:where(.not-content *)) {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-th);
+  color: var(--text-muted);
+}
+
+.sl-markdown-content :not(pre) > code:not(:where(.not-content *)) {
+  border-radius: var(--radius-sm);
+}
+
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 3px;
 }

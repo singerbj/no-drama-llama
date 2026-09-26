@@ -1,5 +1,6 @@
 ---
 import { Code } from 'astro:components';
+import '../../../design/styles.css';
 import '../styles/landing.css';
 import logo from '../assets/logo.svg?raw';
 
@@ -43,41 +44,49 @@ const steps = [
 const features = [
   {
     icon: 'gpu',
+    tone: 'tone-running',
     title: 'Fits any GPU',
     body: 'NVIDIA, AMD or Intel. CUDA or Vulkan is chosen for you, and llama.cpp sizes the context and GPU layers to your free VRAM.',
   },
   {
     icon: 'eye',
+    tone: 'tone-game',
     title: 'Game detection that works',
     body: 'Reads the records of a dozen-plus launchers and watches per-process GPU use, so it catches the games launchers miss.',
   },
   {
     icon: 'api',
+    tone: 'tone-paused',
     title: 'OpenAI-compatible API',
     body: 'Point any OpenAI client, editor plugin or agent at http://127.0.0.1:8080/v1. Add an API key to share it on your network.',
   },
   {
     icon: 'tray',
+    tone: 'tone-loading',
     title: 'Lives in the tray',
     body: 'A status icon, every setting in the right-click menu, and a click-through popup that never steals focus from your game.',
   },
   {
     icon: 'key',
+    tone: 'tone-game',
     title: 'Ctrl+Alt+L',
     body: 'Turn the model on or off from anywhere, even full-screen.',
   },
   {
     icon: 'box',
+    tone: 'tone-running',
     title: 'Pick your model',
     body: 'A catalog of Qwen 3.8 quants rated for your PC, downloaded in the background. Or drop in any .gguf of your own.',
   },
   {
     icon: 'moon',
+    tone: 'tone-loading',
     title: 'Always on, low power',
     body: 'No sleep, screen off after 10 minutes, PCIe/CPU/USB power saving and Wake-on-LAN. Uninstalling puts it all back.',
   },
   {
     icon: 'shield',
+    tone: 'tone-paused',
     title: 'Signed updates',
     body: 'Updates itself from GitHub releases, but only ones signed with the project key for that exact version.',
   },
@@ -158,11 +167,14 @@ const icons: Record<string, string> = {
     <meta property="og:url" content={new URL(base, Astro.site)} />
     <meta name="twitter:card" content="summary" />
     <script is:inline>
-      // Share the docs' theme choice (Starlight stores it under this key).
+      // Share the docs' theme choice (Starlight stores it under this key), else follow the system.
+      // Without either, the page is dark (the design system's default).
+      let t;
       try {
-        const t = localStorage.getItem('starlight-theme');
-        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+        t = localStorage.getItem('starlight-theme');
       } catch {}
+      if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
     </script>
   </head>
   <body>
@@ -178,7 +190,8 @@ const icons: Record<string, string> = {
           <a href={docs('guides/api/')} class="hide-sm">API</a>
           <a href={repo} class="hide-sm">GitHub</a>
           <button class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18V3Z" fill="currentColor"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+            <svg class="i sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-2.93 1.41-1.41m11.32-11.32 1.41-1.41M2 12h2m16 0h2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41"/></svg>
+            <svg class="i moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
           </button>
           <a class="btn btn-sm" href={download}>Download</a>
         </nav>
@@ -197,7 +210,7 @@ const icons: Record<string, string> = {
             </p>
             <div class="ctas">
               <a class="btn" href={download}>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5 10.5 4.5v7H3v-6Zm0 13 7.5 1v-7H3v6Zm8.5 1.1L21 21v-8.5h-9.5v7.1Zm0-15.2v7.1H21V3l-9.5 1.4Z" fill="currentColor"/></svg>
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
                 Download for Windows
               </a>
               <a class="btn btn-ghost" href={docs()}>Read the docs →</a>
@@ -256,7 +269,7 @@ const icons: Record<string, string> = {
           <p class="section-lede">Built for the PC that’s a game machine at night and a model server the rest of the time.</p>
           <div class="features">
             {features.map((f) => (
-              <article class="card">
+              <article class={`card ${f.tone}`}>
                 <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" set:html={icons[f.icon]} />
                 <h3>{f.title}</h3>
                 <p>{f.body}</p>
@@ -344,10 +357,14 @@ const icons: Record<string, string> = {
 
       <section class="section cta-final">
         <div class="wrap narrow center">
-          <h2>Game on. The llama will wait.</h2>
+          <img class="cta-logo" src={`${base}favicon.svg`} width="72" height="72" alt="" />
+          <h2>Game on. <span class="accent">The llama will wait.</span></h2>
           <p class="section-lede">Download the exe, choose <em>Yes</em> to install, and it takes care of the rest.</p>
           <div class="ctas center">
-            <a class="btn" href={download}>Download for Windows</a>
+            <a class="btn" href={download}>
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              Download for Windows
+            </a>
             <a class="btn btn-ghost" href={docs('install/')}>Installation guide</a>
           </div>
         </div>

@@ -79,6 +79,8 @@ npm run build     # type-checks and builds to site/dist
 | `site/src/pages/index.astro` | The landing page |
 | `site/src/content/docs/docs/` | The docs pages |
 | `site/astro.config.ts` | Site settings and the sidebar |
+| `site/src/styles/` | The landing page and docs styles |
+| `design/` | The design system both the site and the settings window use: tokens and fonts (imported from `design/styles.css` and `design/tokens/`), guidelines, reference components and UI kits |
 
 The Architecture, Releasing and Changelog pages are generated from `docs/architecture.md`,
 `docs/releasing.md` and `CHANGELOG.md` by `site/scripts/sync-docs.ts`, so edit those files

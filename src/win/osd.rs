@@ -33,13 +33,15 @@ pub fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     COLORREF(r as u32 | (g as u32) << 8 | (b as u32) << 16)
 }
 
+/// The design system's status tones (design/tokens/colors.css, the dark-ground set): mint,
+/// marigold, sky, pebble and tomato. Running is also the logo's disc.
 pub fn tone_rgb(t: Tone) -> (u8, u8, u8) {
     match t {
-        Tone::Running => (46, 160, 67),
-        Tone::Loading => (210, 153, 34),
-        Tone::Paused => (88, 166, 255),
-        Tone::Off => (140, 140, 140),
-        Tone::Error => (218, 54, 51),
+        Tone::Running => (0x3D, 0xDC, 0x84),
+        Tone::Loading => (0xFF, 0xB6, 0x27),
+        Tone::Paused => (0x5A, 0xB0, 0xFF),
+        Tone::Off => (0xA8, 0x9C, 0x90),
+        Tone::Error => (0xFF, 0x5A, 0x4E),
     }
 }
 
@@ -282,16 +284,6 @@ unsafe fn paint(o: &Osd, dc: windows::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
     let _ = DeleteObject(HGDIOBJ(bg.0));
 
     let accent = CreateSolidBrush(o.accent);
-    FillRect(
-        dc,
-        &RECT {
-            left: 0,
-            top: 0,
-            right: s(4),
-            bottom: rc.bottom,
-        },
-        accent,
-    ); // accent edge
     let old_brush = SelectObject(dc, HGDIOBJ(accent.0));
     let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
     let dy = pad + (o.title_h - dot) / 2;

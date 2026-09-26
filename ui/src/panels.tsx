@@ -128,8 +128,9 @@ function CatalogRow({ c }: { c: CatalogEntry }) {
       <div>
         <span>{c.label}</span>
         <small>
+          <span className="fit-dot" />
           {c.note}
-          {c.recommended && " · recommended"}
+          {c.recommended && " · recommended ★"}
         </small>
       </div>
       {button}
@@ -251,7 +252,7 @@ export function LayaPanel() {
   const progress = job && job.total ? job.done / job.total : 0;
   return (
     <>
-      <p className="hint">
+      <p className="intro">
         Laya is a <i>decision model</i>: it answers typed questions about a text (pick one of these options, score it,
         yes or no) in milliseconds, instead of writing text. Ollaya (ollaya.dev) serves it next to the LLM, with the
         same on/off switch and pause while gaming.

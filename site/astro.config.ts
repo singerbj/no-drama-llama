@@ -13,6 +13,8 @@ export default defineConfig({
   site,
   base: base || '/',
   trailingSlash: 'always',
+  // The design system (tokens and fonts) lives in ../design, outside this package.
+  vite: { server: { fs: { allow: ['.', '../design'] } } },
   markdown: {
     processor: satteri({ mdastPlugins: [baseLinks(base)] }),
   },
@@ -31,6 +33,30 @@ export default defineConfig({
       },
       lastUpdated: true,
       customCss: ['./src/styles/theme.css'],
+      // Code panels are always dark (design system), in both themes.
+      expressiveCode: {
+        themes: ['vitesse-dark'],
+        useStarlightUiThemeColors: false,
+        styleOverrides: {
+          borderRadius: '14px',
+          borderColor: 'var(--border)',
+          codeFontFamily: 'var(--font-mono)',
+          uiFontFamily: 'var(--font-sans)',
+          codeBackground: 'var(--code-bg)',
+          frames: {
+            editorBackground: 'var(--code-bg)',
+            editorTabBarBackground: 'var(--code-bg)',
+            editorActiveTabBackground: 'var(--code-bg)',
+            editorActiveTabIndicatorTopColor: 'transparent',
+            editorActiveTabIndicatorBottomColor: 'transparent',
+            editorTabBarBorderBottomColor: 'var(--wool-700)',
+            terminalBackground: 'var(--code-bg)',
+            terminalTitlebarBackground: 'var(--code-bg)',
+            terminalTitlebarBorderBottomColor: 'var(--wool-700)',
+            frameBoxShadowCssValue: 'none',
+          },
+        },
+      },
       sidebar: [
         {
           label: 'Getting started',

@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <title>No Drama Llama</title>
   <!-- .status is the brand green here; the tray fills it with the app's status color (scripts/icons.ts). -->
-  <g class="status" fill="#53ab79">
+  <g class="status" fill="#3DDC84">
     <circle cx="256.5" cy="253.9" r="236.3"/>
-    <path stroke="#53ab79" stroke-width="1" stroke-linejoin="round" d="M175.8 48.1L208.4 124.4L175.8 161.1ZM425.6 48.7L351.0 125.6L393.0 120.3Z"/>
+    <path stroke="#3DDC84" stroke-width="1" stroke-linejoin="round" d="M175.8 48.1L208.4 124.4L175.8 161.1ZM425.6 48.7L351.0 125.6L393.0 120.3Z"/>
   </g>
   <clipPath id="ndl-clip"><circle cx="256.5" cy="253.9" r="236.8"/></clipPath>
   <path fill="#fff" clip-path="url(#ndl-clip)" d="M155.0 -5.9L162.8 -5.9L162.8 177.6L216.6 128.0L216.6 97.2L330.0 97.2L346.3 134.7L381.8 134.7L375.1 148.0C384.0 167.2 398.8 183.5 404.7 208.6L408.4 224.9L367.0 319.6L369.2 327.0L372.9 334.4L373.9 341.8L373.9 425.4Q373.9 435.1 364.0 435.1L338.9 435.1L338.9 526.8L117.3 526.8Z"/>

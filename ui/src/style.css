@@ -1,45 +1,14 @@
+/* The settings window, styled with the No Drama Llama design system (design/). Tokens, fonts
+   and element defaults come from design/styles.css; this file only lays out the window. */
+@import "../../design/styles.css";
+
 :root {
-  color-scheme: light dark;
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --text: #1c1f24;
-  --muted: #606874;
-  --border: #dfe3e8;
-  --accent: #2e7d4f;
-  --accent-text: #ffffff;
-  --danger: #c62f2c;
-  --field: #ffffff;
-  --hover: #eef1f4;
-  /* status tones: the tray icon's colours (osd::tone_rgb) */
-  --running: rgb(46 160 67);
-  --loading: rgb(210 153 34);
-  --paused: rgb(88 166 255);
-  --off: rgb(140 140 140);
-  --error: rgb(218 54 51);
-  font:
-    14px/1.45 "Segoe UI Variable Text",
-    "Segoe UI",
-    system-ui,
-    sans-serif;
+  /* Lucide chevron-down in --text-muted, for native selects. */
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23C9BDB0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1b1d21;
-    --panel: #24272c;
-    --text: #e8eaed;
-    --muted: #9aa1ab;
-    --border: #363a41;
-    --accent: #3fa865;
-    --accent-text: #0d1a12;
-    --danger: #ef5350;
-    --field: #1d1f23;
-    --hover: #2d3137;
-  }
-}
-
-* {
-  box-sizing: border-box;
+[data-theme="light"] {
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23635649' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
 html,
@@ -50,8 +19,6 @@ body,
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
   user-select: none;
 }
 
@@ -67,21 +34,16 @@ code {
   user-select: text;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  color: inherit;
-}
-
 button {
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 5px 14px;
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    background var(--dur-fast),
+    filter var(--dur-fast);
 }
 
 button:hover:not(:disabled) {
@@ -96,8 +58,8 @@ button:disabled {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--accent-text);
-  font-weight: 600;
+  color: var(--on-accent);
+  font-weight: var(--weight-semibold);
 }
 
 button.primary:hover:not(:disabled) {
@@ -110,9 +72,8 @@ button.danger {
   border-color: var(--danger);
 }
 
-code {
-  font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 0.92em;
+button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
 }
 
 /* ---------------------------------------------------------------- status header */
@@ -122,33 +83,34 @@ code {
   align-items: center;
   gap: 12px;
   padding: 14px 20px;
-  background: var(--panel);
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
+/* Solid tone dots: 14px in the header, 10px inline. Never ringed. */
 .dot {
   width: 14px;
   height: 14px;
   border-radius: 50%;
   flex: none;
-  background: var(--off);
+  background: var(--tone-off);
 }
 
 .dot.running {
-  background: var(--running);
+  background: var(--tone-running);
 }
 .dot.loading {
-  background: var(--loading);
-  animation: pulse 1.2s ease-in-out infinite;
+  background: var(--tone-loading);
+  animation: ndl-pulse var(--dur-pulse) var(--ease-inout) infinite;
 }
 .dot.paused {
-  background: var(--paused);
+  background: var(--tone-paused);
 }
 .dot.off {
-  background: var(--off);
+  background: var(--tone-off);
 }
 .dot.error {
-  background: var(--error);
+  background: var(--tone-error);
 }
 
 .dot.inline-dot {
@@ -156,12 +118,6 @@ code {
   width: 10px;
   height: 10px;
   vertical-align: -1px;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.45;
-  }
 }
 
 .status-text {
@@ -172,14 +128,16 @@ code {
 }
 
 .status-text strong {
-  font-size: 15px;
+  font-size: var(--text-status);
+  font-weight: var(--weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .status-text small {
-  color: var(--muted);
+  color: var(--text-muted);
+  font-size: var(--text-hint);
 }
 
 .actions {
@@ -196,7 +154,7 @@ code {
 }
 
 nav {
-  width: 180px;
+  width: var(--nav-width);
   flex: none;
   padding: 12px 8px;
   display: flex;
@@ -205,17 +163,21 @@ nav {
   border-right: 1px solid var(--border);
 }
 
+/* Selection is a fill and a full border, never a one-sided bar. */
 .tab {
   text-align: left;
-  border: none;
+  border: 1px solid transparent;
   background: none;
-  padding: 8px 12px;
+  padding: 7px 11px;
+  color: var(--text-muted);
 }
 
-.tab.active {
-  background: var(--hover);
-  font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--accent);
+.tab.active,
+.tab.active:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent-strong);
+  font-weight: var(--weight-semibold);
 }
 
 main {
@@ -229,17 +191,21 @@ main.dirty {
 }
 
 h2 {
-  font-size: 18px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--text-app-h2);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--leading-tight);
   margin: 12px 0 14px;
 }
 
 fieldset {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
+  border-radius: var(--radius-md);
+  background: var(--surface);
   margin: 0 0 16px;
   padding: 4px 16px 12px;
+  min-width: 0;
 }
 
 fieldset:disabled {
@@ -247,7 +213,7 @@ fieldset:disabled {
 }
 
 legend {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   padding: 0 6px;
   margin-left: -6px;
 }
@@ -283,12 +249,17 @@ fieldset > .row:last-child {
 .entry small,
 .model small,
 .download small {
-  color: var(--muted);
-  font-size: 12.5px;
+  color: var(--text-muted);
+  font-size: var(--text-hint);
 }
 
 .hint {
   margin: 8px 0 0;
+}
+
+.intro {
+  margin: 0 0 14px;
+  color: var(--text-muted);
 }
 
 .row-buttons {
@@ -311,7 +282,7 @@ select,
 textarea {
   background: var(--field);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 5px 8px;
   min-width: 0;
 }
@@ -326,20 +297,24 @@ input[type="text"] {
 
 select {
   min-width: 220px;
+  appearance: none;
+  padding-right: 30px;
+  background: var(--chevron) right 9px center / 16px no-repeat var(--field);
+  cursor: pointer;
 }
 
 textarea {
   width: 100%;
   resize: vertical;
-  font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
 }
 
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: var(--focus-ring);
   outline-offset: 1px;
 }
 
@@ -355,17 +330,17 @@ input:invalid {
   gap: 8px;
 }
 
-/* toggle switch */
+/* toggle switch: 40x22, mint when on */
 input.switch {
   appearance: none;
   flex: none;
   width: 40px;
   height: 22px;
   border-radius: 11px;
-  background: var(--border);
+  background: var(--border-strong);
   position: relative;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--dur-fast);
   margin: 0;
 }
 
@@ -377,9 +352,9 @@ input.switch::after {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
-  transition: transform 0.15s;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  background: var(--llama-white);
+  transition: transform var(--dur-fast);
+  box-shadow: var(--shadow-knob);
 }
 
 input.switch:checked {
@@ -398,13 +373,13 @@ input.switch:checked::after {
   gap: 8px 16px;
   margin: 0 0 8px;
   padding: 14px 16px;
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .facts dt {
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .facts dd {
@@ -419,9 +394,9 @@ input.switch:checked::after {
   gap: 12px;
   padding: 10px 14px;
   margin-bottom: 14px;
-  border-radius: 8px;
-  border: 1px solid var(--paused);
-  background: color-mix(in srgb, var(--paused) 12%, var(--panel));
+  border-radius: var(--radius-md);
+  border: 1px solid var(--tone-paused);
+  background: color-mix(in srgb, var(--tone-paused) 12%, var(--surface));
 }
 
 main section > .row {
@@ -431,8 +406,8 @@ main section > .row {
 .download {
   padding: 12px 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
+  border-radius: var(--radius-md);
+  background: var(--surface);
   margin-top: 8px;
 }
 
@@ -444,10 +419,33 @@ main section > .row {
   margin-bottom: 8px;
 }
 
+.download small {
+  display: block;
+  margin-top: 6px;
+}
+
 progress {
+  appearance: none;
+  display: block;
   width: 100%;
   height: 8px;
-  accent-color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-alt);
+  overflow: hidden;
+}
+
+progress::-webkit-progress-bar {
+  background: var(--bg-alt);
+}
+
+progress::-webkit-progress-value {
+  background: var(--tone-running);
+  transition: width 0.3s var(--ease-out);
+}
+
+progress::-moz-progress-bar {
+  background: var(--tone-running);
 }
 
 /* ---------------------------------------------------------------- models */
@@ -463,7 +461,7 @@ progress {
   align-items: center;
   gap: 10px;
   padding: 7px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
@@ -479,6 +477,10 @@ progress {
 .model input {
   accent-color: var(--accent);
   margin: 0;
+}
+
+.model small.missing {
+  color: var(--tone-error);
 }
 
 .catalog {
@@ -506,13 +508,36 @@ progress {
   min-width: 0;
 }
 
+.entry small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .entry.recommended small {
   color: var(--accent);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .entry.fit-tooBig span {
-  color: var(--muted);
+  color: var(--text-muted);
+}
+
+/* How well a catalog model fits: running = GPU, loading = GPU + RAM, off = too big. */
+.fit-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--tone-running);
+}
+
+.fit-gpuAndRam .fit-dot {
+  background: var(--tone-loading);
+}
+
+.fit-tooBig .fit-dot {
+  background: var(--tone-off);
 }
 
 /* ---------------------------------------------------------------- save bar, toast */
@@ -526,9 +551,9 @@ progress {
   align-items: center;
   gap: 10px;
   padding: 12px 20px;
-  background: var(--panel);
+  background: var(--surface);
   border-top: 1px solid var(--border);
-  box-shadow: 0 -4px 16px rgb(0 0 0 / 0.08);
+  box-shadow: var(--shadow-savebar);
 }
 
 .savebar span {
@@ -542,15 +567,16 @@ progress {
   transform: translateX(-50%);
   max-width: min(640px, 90vw);
   padding: 10px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--text);
   color: var(--bg);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+  box-shadow: var(--shadow-toast);
+  animation: ndl-toast var(--dur-fast) var(--ease-out);
 }
 
 .toast.error {
   background: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
 }
 
 [hidden] {
