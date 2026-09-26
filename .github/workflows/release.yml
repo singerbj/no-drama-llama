@@ -1,0 +1,35 @@
+name: Release
+
+# Push a tag like v1.1.0 (matching $AppVersion in src/config.ps1) to publish a zip
+# with the scripts at the top level, ready to extract and run install.ps1.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint + tests
+        run: ./tools/Invoke-Checks.ps1 -InstallDependencies
+      - name: Check tag matches $AppVersion
+        run: |
+          . ./src/config.ps1
+          if ("v$AppVersion" -ne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match `$AppVersion $AppVersion in src/config.ps1" }
+      - name: Build zip
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item src/*.ps1, README.md, CHANGELOG.md dist/
+          Compress-Archive dist/* "no-drama-llama-$env:GITHUB_REF_NAME.zip"
+          (Get-FileHash "no-drama-llama-$env:GITHUB_REF_NAME.zip" -Algorithm SHA256).Hash
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME "no-drama-llama-$env:GITHUB_REF_NAME.zip" --generate-notes
