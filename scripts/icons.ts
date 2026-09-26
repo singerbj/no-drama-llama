@@ -5,8 +5,8 @@
 // Writes:
 //   site/public/favicon.svg, site/src/assets/logo.svg   copies of the logo
 //   icons/icon.ico                                      the exe and settings window icon
-//   icons/tray-logo.rgba   32x32 RGBA: the logo without its circle
-//   icons/tray-disc.a      32x32 alpha: the circle, which the tray fills with the status color
+//   icons/tray-logo.rgba   32x32 RGBA: the logo without its .status parts (circle, inner ears)
+//   icons/tray-disc.a      32x32 alpha: the .status parts, which the tray fills with the status color
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
@@ -22,11 +22,11 @@ const browser = await chromium.launch();
 const page = await browser.newPage();
 const out: { rgba: Record<string, number[]>; png: Record<number, string> } = await page.evaluate(
   async ({ svg, tray, sizes }: { svg: string; tray: number; sizes: number[] }) => {
-    // `part`: 'all', 'no-disc' (circle hidden) or 'disc' (only the circle).
+    // `part`: 'all', 'no-disc' (.status hidden) or 'disc' (only .status).
     const variant = (part: string) => {
       const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
-      const disc = doc.getElementById('status')!;
-      if (part === 'no-disc') disc.setAttribute('fill', 'none');
+      const disc = doc.querySelector('.status')!;
+      if (part === 'no-disc') disc.remove();
       if (part === 'disc') {
         for (const el of [...doc.documentElement.children]) if (el !== disc) el.remove();
       }

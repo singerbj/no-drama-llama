@@ -60,8 +60,9 @@ fn edit(f: impl Fn(&mut Settings) + Send + Sync + 'static) -> Act {
 
 pub(crate) const ICON_SIZE: usize = 32;
 
-/// The logo (icons/logo.svg) at 32x32, rendered by scripts/icons.ts: everything but the
-/// circle as RGBA, and the circle's coverage, which is filled with the status color.
+/// The logo (icons/logo.svg) at 32x32, rendered by scripts/icons.ts: everything but its
+/// `.status` parts (the circle and inner ears) as RGBA, and their coverage, which is filled
+/// with the status color.
 const LOGO: &[u8; ICON_SIZE * ICON_SIZE * 4] = include_bytes!("../../icons/tray-logo.rgba");
 const DISC: &[u8; ICON_SIZE * ICON_SIZE] = include_bytes!("../../icons/tray-disc.a");
 
