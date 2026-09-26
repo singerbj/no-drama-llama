@@ -1,0 +1,104 @@
+---
+title: Chat and API
+description: Use the built-in chat UI, or connect OpenAI-compatible clients, SDKs and tools.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+No Drama Llama runs llama.cpp's `llama-server`, which serves:
+
+| | |
+| --- | --- |
+| **Chat UI** | [http://127.0.0.1:8080](http://127.0.0.1:8080) (or double-click the tray icon) |
+| **OpenAI-compatible API** | `http://127.0.0.1:8080/v1` |
+| **Health check** | `http://127.0.0.1:8080/health` |
+
+Only one model is loaded at a time, so the `model` field in requests can be anything.
+
+## Examples
+
+<Tabs syncKey="lang">
+  <TabItem label="TypeScript">
+    ```ts
+    import OpenAI from 'openai';
+
+    const llama = new OpenAI({
+      baseURL: 'http://127.0.0.1:8080/v1',
+      apiKey: process.env.LLAMA_API_KEY ?? 'none', // your ApiKey, if you set one
+    });
+
+    const stream = await llama.chat.completions.create({
+      model: 'local',
+      messages: [{ role: 'user', content: 'Explain VRAM in one paragraph.' }],
+      stream: true,
+    });
+
+    for await (const chunk of stream) {
+      process.stdout.write(chunk.choices[0]?.delta?.content ?? '');
+    }
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    from openai import OpenAI
+
+    llama = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="none")
+
+    reply = llama.chat.completions.create(
+        model="local",
+        messages=[{"role": "user", "content": "Explain VRAM in one paragraph."}],
+    )
+    print(reply.choices[0].message.content)
+    ```
+  </TabItem>
+  <TabItem label="curl">
+    ```bash
+    curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" \
+      -d '{"messages":[{"role":"user","content":"Hello!"}]}'
+    ```
+  </TabItem>
+  <TabItem label="PowerShell">
+    ```powershell
+    $body = @{ messages = @(@{ role = 'user'; content = 'Hello!' }) } | ConvertTo-Json -Depth 5
+    (Invoke-RestMethod http://127.0.0.1:8080/v1/chat/completions -Method Post `
+      -ContentType 'application/json' -Body $body).choices[0].message.content
+    ```
+  </TabItem>
+</Tabs>
+
+## Connect a tool
+
+Most editors, agents and chat front-ends have an "OpenAI-compatible" provider option. Use:
+
+- **Base URL:** `http://127.0.0.1:8080/v1` (or `http://<this-pc>:8080/v1` from
+  [another device](/docs/guides/network/))
+- **API key:** your `ApiKey` if you set one, otherwise any non-empty value
+- **Model:** any name
+
+## Reasoning
+
+Qwen 3.8 can think before it answers. Set how much from the tray under
+**Settings → Reasoning**: `none`, `low` (the default), `medium` or `xhigh`. The server restarts
+to apply it. llama.cpp returns the model's thinking separately from the answer, so clients that
+don't show it only see the final reply.
+
+Reasoning and Qwen's recommended sampling settings are only applied to Qwen models. Other
+models use their own defaults.
+
+## When the model is paused
+
+While a game is running (or the model is off or loading), the server isn't there and requests
+fail to connect. Clients should retry, or check `GET /health`, which returns `200` once the
+model is ready.
+
+<Aside type="tip">
+Only one request is processed at a time (`--parallel 1`), which gives the single user the
+fastest replies and the most context. Other requests queue.
+</Aside>
+
+## Context length
+
+With **Settings → Context length → Auto** (the default), llama.cpp uses the largest context that
+fits your GPU. The tray's status line shows what it chose. Pick a fixed size from the menu or
+set `Context` in the [settings file](/docs/reference/settings/) if you need a smaller one to
+leave VRAM for other apps.

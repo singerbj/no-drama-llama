@@ -1,0 +1,383 @@
+---
+import { Code } from 'astro:components';
+import '../styles/landing.css';
+import logo from '../assets/logo.svg?raw';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const docs = (path = '') => `${base}docs/${path}`;
+const repo = 'https://github.com/singerbj/no-drama-llama';
+const download = `${repo}/releases/latest`;
+
+const snippet = `import OpenAI from 'openai';
+
+const llama = new OpenAI({
+  baseURL: 'http://127.0.0.1:8080/v1',
+  apiKey: 'not-needed-on-localhost',
+});
+
+const reply = await llama.chat.completions.create({
+  model: 'local',
+  messages: [{ role: 'user', content: 'Hello!' }],
+});
+console.log(reply.choices[0].message.content);`;
+
+const title = 'No Drama Llama: a local LLM server that pauses while you play';
+const description =
+  'Turn your Windows gaming PC into an always-on local LLM server. It frees your VRAM the moment a game starts and brings the model back when you quit.';
+
+const steps = [
+  {
+    title: 'Install one exe',
+    body: 'It detects your GPU, installs the fastest llama.cpp build for it, and downloads the best model that fits. Every download is verified.',
+  },
+  {
+    title: 'It serves, all day',
+    body: 'An OpenAI-compatible API and a chat UI at 127.0.0.1:8080. It starts with Windows and runs in the tray.',
+  },
+  {
+    title: 'You play, it steps aside',
+    body: 'Launch a game and the model stops, so the game gets all of your VRAM. Quit, and it comes back a minute later.',
+  },
+];
+
+const features = [
+  {
+    icon: 'gpu',
+    title: 'Fits any GPU',
+    body: 'NVIDIA, AMD or Intel. CUDA or Vulkan is chosen for you, and llama.cpp sizes the context and GPU layers to your free VRAM.',
+  },
+  {
+    icon: 'eye',
+    title: 'Game detection that works',
+    body: 'Reads the records of a dozen-plus launchers and watches per-process GPU use, so it catches the games launchers miss.',
+  },
+  {
+    icon: 'api',
+    title: 'OpenAI-compatible API',
+    body: 'Point any OpenAI client, editor plugin or agent at http://127.0.0.1:8080/v1. Add an API key to share it on your network.',
+  },
+  {
+    icon: 'tray',
+    title: 'Lives in the tray',
+    body: 'A status icon, every setting in the right-click menu, and a click-through popup that never steals focus from your game.',
+  },
+  {
+    icon: 'key',
+    title: 'Ctrl+Alt+L',
+    body: 'Turn the model on or off from anywhere, even full-screen.',
+  },
+  {
+    icon: 'box',
+    title: 'Pick your model',
+    body: 'A catalog of Qwen 3.8 quants rated for your PC, downloaded in the background. Or drop in any .gguf of your own.',
+  },
+  {
+    icon: 'moon',
+    title: 'Always on, low power',
+    body: 'No sleep, screen off after 10 minutes, PCIe/CPU/USB power saving and Wake-on-LAN. Uninstalling puts it all back.',
+  },
+  {
+    icon: 'shield',
+    title: 'Signed updates',
+    body: 'Updates itself from GitHub releases, but only ones signed with the project key for that exact version.',
+  },
+];
+
+const launchers = [
+  'Steam', 'Epic', 'GOG', 'EA', 'Ubisoft', 'Battle.net', 'Riot', 'Rockstar',
+  'Xbox / Game Pass', 'Heroic', 'Humble', 'HoYoPlay', 'Meta / Oculus', 'Emulators',
+];
+
+const fits = [
+  { vram: '48 GB', example: '', model: '27B Q8_0' },
+  { vram: '32 GB', example: 'RTX 5090', model: '27B UD-Q6_K_XL' },
+  { vram: '24 GB', example: 'RX 7900 XTX, RTX 4090', model: '27B UD-Q4_K_XL' },
+  { vram: '20 GB', example: 'RX 7900 XT', model: '27B UD-IQ4_XS' },
+  { vram: '16 GB', example: 'RTX 4080, RX 7800 XT', model: '27B UD-IQ3_XXS' },
+  { vram: '8 – 12 GB', example: '', model: '27B UD-IQ2_XXS, or Flash-Next with 96 GB+ RAM' },
+];
+
+const states = [
+  { dot: 'running', label: 'Running', note: 'serving requests' },
+  { dot: 'paused', label: 'Paused for a game', note: 'VRAM freed' },
+  { dot: 'loading', label: 'Loading', note: 'game closed' },
+  { dot: 'running', label: 'Running', note: 'back to work' },
+];
+
+const faqs = [
+  {
+    q: 'Is it free?',
+    a: 'Yes. No Drama Llama is open source, and everything runs on your own PC. Nothing is sent to a cloud service.',
+  },
+  {
+    q: 'Will it slow down my games?',
+    a: 'No. When a game starts, the model is stopped completely, so the game gets all of your VRAM. It only comes back after the game has been closed for a while (60 seconds by default).',
+  },
+  {
+    q: 'What if it pauses for something that isn’t a game?',
+    a: 'Open the tray menu while it’s paused and choose “Not a game – ignore app”. You can also tune the GPU thresholds or switch detection to launchers only.',
+  },
+  {
+    q: 'Can I use it from my laptop or phone?',
+    a: 'Yes. Set Access to “Devices on my network” and set an API key. Then any device on your network can use the chat UI or the API.',
+  },
+  {
+    q: 'Does it work without a GPU?',
+    a: 'It runs on the CPU, slowly. Any GPU with a Vulkan or CUDA driver works, from 8 GB cards up.',
+  },
+  {
+    q: 'Why does Windows say “Windows protected your PC”?',
+    a: 'The exe isn’t code-signed yet. Choose More info → Run anyway, or build it yourself from source. Updates are still verified with the project’s signing key.',
+  },
+];
+
+const icons: Record<string, string> = {
+  gpu: '<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="9" cy="12" r="2.5"/><circle cx="15.5" cy="12" r="2.5"/><path d="M6 18v2M18 18v2M3 10H1M3 14H1"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+  api: '<path d="m8 9-4 3 4 3M16 9l4 3-4 3M13.5 6l-3 12"/>',
+  tray: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15h18"/><circle cx="16.5" cy="17.5" r="1" fill="currentColor"/>',
+  key: '<rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11h.01M10 11h.01M14 11h.01M18 11h.01M7 14h10"/>',
+  box: '<path d="M21 8 12 3 3 8v8l9 5 9-5V8Z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
+  shield: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
+};
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
+    <link rel="canonical" href={new URL(base, Astro.site)} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={new URL(base, Astro.site)} />
+    <meta name="twitter:card" content="summary" />
+    <script is:inline>
+      // Share the docs' theme choice (Starlight stores it under this key).
+      try {
+        const t = localStorage.getItem('starlight-theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="brand" href={base}>
+          <span class="brand-logo" set:html={logo} />
+          <span>No Drama Llama</span>
+        </a>
+        <nav aria-label="Main">
+          <a href={docs()}>Docs</a>
+          <a href={docs('guides/api/')} class="hide-sm">API</a>
+          <a href={repo} class="hide-sm">GitHub</a>
+          <button class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18V3Z" fill="currentColor"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          </button>
+          <a class="btn btn-sm" href={download}>Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="wrap hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">Free &amp; open source · Windows 10 and 11</p>
+            <h1>Your gaming PC is an AI server. <span class="accent">It just knows when to step aside.</span></h1>
+            <p class="lede">
+              No Drama Llama runs a local LLM on your GPU around the clock. The moment a game starts,
+              it stops the model and hands the game all of your VRAM. Quit, and it’s back.
+            </p>
+            <div class="ctas">
+              <a class="btn" href={download}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5 10.5 4.5v7H3v-6Zm0 13 7.5 1v-7H3v6Zm8.5 1.1L21 21v-8.5h-9.5v7.1Zm0-15.2v7.1H21V3l-9.5 1.4Z" fill="currentColor"/></svg>
+                Download for Windows
+              </a>
+              <a class="btn btn-ghost" href={docs()}>Read the docs →</a>
+            </div>
+            <p class="fineprint">One exe · installs in minutes · uninstall restores every setting</p>
+          </div>
+
+          <div class="demo" aria-label="How No Drama Llama reacts to a game">
+            <div class="popup" role="img" aria-label="On-screen popup: LLM paused, Example Game (Steam) detected, GPU freed">
+              <span class="dot paused"></span>
+              <div>
+                <strong>LLM paused</strong>
+                <span>Example Game (Steam) detected · GPU freed</span>
+              </div>
+            </div>
+            <div class="window">
+              <div class="window-bar"><span></span><span></span><span></span><em>VRAM · 24 GB</em></div>
+              <div class="vram">
+                <div class="vram-row">
+                  <span class="vram-label">Before</span>
+                  <div class="bar"><span class="seg llm" style="width:78%">Qwen 3.8 27B</span></div>
+                </div>
+                <div class="vram-row">
+                  <span class="vram-label">In game</span>
+                  <div class="bar"><span class="seg game" style="width:92%">Your game</span></div>
+                </div>
+              </div>
+              <ol class="timeline">
+                {states.map((s) => (
+                  <li><span class={`dot ${s.dot}`}></span><strong>{s.label}</strong><em>{s.note}</em></li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="how">
+        <div class="wrap">
+          <h2>How it works</h2>
+          <ol class="steps">
+            {steps.map((s, i) => (
+              <li>
+                <span class="step-num">{i + 1}</span>
+                <h3>{s.title}</h3>
+                <p>{s.body}</p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section class="section alt" id="features">
+        <div class="wrap">
+          <h2>Everything a shared GPU needs</h2>
+          <p class="section-lede">Built for the PC that’s a game machine at night and a model server the rest of the time.</p>
+          <div class="features">
+            {features.map((f) => (
+              <article class="card">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" set:html={icons[f.icon]} />
+                <h3>{f.title}</h3>
+                <p>{f.body}</p>
+              </article>
+            ))}
+          </div>
+          <div class="launchers">
+            <p>Knows where your games live</p>
+            <ul>{launchers.map((l) => <li>{l}</li>)}</ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="api">
+        <div class="wrap split">
+          <div>
+            <h2>Talks OpenAI</h2>
+            <p class="section-lede">
+              llama.cpp’s server speaks the OpenAI API, so the tools you already use work unchanged:
+              SDKs, editor assistants, agents and chat front-ends. There’s also a built-in chat UI:
+              just double-click the tray icon.
+            </p>
+            <a class="link" href={docs('guides/api/')}>Connect your tools →</a>
+          </div>
+          <div class="code" role="region" aria-label="Example: calling the API from TypeScript">
+            <div class="code-bar"><span>chat.ts</span></div>
+            <Code code={snippet} lang="ts" theme="vitesse-dark" />
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt" id="models">
+        <div class="wrap split">
+          <div>
+            <h2>The best model your PC can run</h2>
+            <p class="section-lede">
+              The installer measures your GPU and RAM and picks a model for you. Every model in the
+              catalog is rated <em>fits your GPU</em>, <em>GPU + RAM</em>, <em>partly in RAM</em> or
+              <em>too big</em>, and you can switch any time from the tray.
+            </p>
+            <a class="link" href={docs('guides/models/')}>How models are chosen →</a>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <caption>Recommended model by GPU memory</caption>
+              <thead><tr><th scope="col">GPU memory</th><th scope="col">Recommended</th></tr></thead>
+              <tbody>
+                {fits.map((r) => (
+                  <tr>
+                    <td><strong>{r.vram}</strong>{r.example && <span class="muted">{r.example}</span>}</td>
+                    <td><code>{r.model}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="trust">
+        <div class="wrap">
+          <h2>Careful with your machine</h2>
+          <ul class="trust">
+            <li><strong>Verified downloads.</strong> llama.cpp and every model are checked against their published SHA-256 before use.</li>
+            <li><strong>Signed updates.</strong> The updater only installs releases signed for that exact version with the project’s minisign key.</li>
+            <li><strong>Locked-down install.</strong> Everything that runs elevated lives in admin-only folders, and every setting is validated before it reaches a command line.</li>
+            <li><strong>Leaves no trace.</strong> Uninstalling restores your original power and Wake-on-LAN settings and removes the app.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section alt" id="faq">
+        <div class="wrap narrow">
+          <h2>Questions</h2>
+          <div class="faq">
+            {faqs.map((f) => (
+              <details>
+                <summary>{f.q}</summary>
+                <p>{f.a}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section class="section cta-final">
+        <div class="wrap narrow center">
+          <h2>Game on. The llama will wait.</h2>
+          <p class="section-lede">Download the exe, choose <em>Yes</em> to install, and it takes care of the rest.</p>
+          <div class="ctas center">
+            <a class="btn" href={download}>Download for Windows</a>
+            <a class="btn btn-ghost" href={docs('install/')}>Installation guide</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <span>No Drama Llama · runs <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a></span>
+        <nav aria-label="Footer">
+          <a href={docs()}>Docs</a>
+          <a href={docs('reference/changelog/')}>Changelog</a>
+          <a href={`${repo}/releases`}>Releases</a>
+          <a href={repo}>GitHub</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script>
+      const root = document.documentElement;
+      document.querySelector('.theme-toggle')?.addEventListener('click', () => {
+        const dark =
+          root.dataset.theme === 'dark' ||
+          (!root.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+        const next = dark ? 'light' : 'dark';
+        root.dataset.theme = next;
+        try {
+          localStorage.setItem('starlight-theme', next);
+        } catch {}
+      });
+    </script>
+  </body>
+</html>
