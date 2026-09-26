@@ -1,0 +1,39 @@
+---
+title: Use it from other devices
+description: Share the model with your laptop, phone or home server, safely.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+By default the server only listens on `127.0.0.1`, so only this PC can use it. To use it from
+other devices on your network:
+
+<Steps>
+
+1. **Set an API key.** Choose **Settings → Edit settings file** and set `ApiKey`, for example:
+
+   ```json
+   "ApiKey": "pick-a-long-random-string"
+   ```
+
+   It can be up to 128 characters of letters, digits, `.`, `_`, `-` and `~`.
+
+2. **Open it up.** Choose **Settings → Access → Devices on my network**. The server restarts
+   listening on `0.0.0.0`.
+
+3. **Allow it through the firewall** if Windows asks, for private networks only.
+
+4. **Connect** from the other device to `http://<this-pc's-name-or-IP>:8080/v1`, sending
+   `Authorization: Bearer <your key>`. OpenAI SDKs send it when you pass `apiKey`.
+
+</Steps>
+
+<Aside type="danger">
+Without an `ApiKey`, anyone on your network can use the model. Never forward port 8080 on your
+router: put a VPN such as WireGuard or Tailscale in front of it instead.
+</Aside>
+
+## Change the port
+
+Set `Port` (1024 – 65535) in the [settings file](/docs/reference/settings/). The default is
+`8080`.

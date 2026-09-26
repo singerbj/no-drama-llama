@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/singerbj/no-drama-llama/actions/workflows/ci.yml/badge.svg)](https://github.com/singerbj/no-drama-llama/actions/workflows/ci.yml)
 
+**[Website](https://singerbj.github.io/no-drama-llama/) · [Docs](https://singerbj.github.io/no-drama-llama/docs/)**
+
 Turns a Windows gaming PC into an always-on local LLM server that **gets out of the way when
 you play**. It runs [llama.cpp](https://github.com/ggml-org/llama.cpp) with a
 [Qwen 3.8](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) model sized for your GPU. When a game
@@ -205,6 +207,7 @@ ui/         the settings window's page (React + TypeScript + Vite), served by Ta
 tests/      integration tests and fixtures
 examples/   fake_llama_server.rs, the test double the Windows tests run
 docs/       architecture, releasing
+site/       the website and docs (Astro + Starlight), deployed to GitHub Pages
 ```
 
 ```sh

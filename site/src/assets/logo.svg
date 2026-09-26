@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>No Drama Llama</title>
+  <path fill="#f5e6d3" stroke="#2b2118" stroke-width="2.5" stroke-linejoin="round" d="M20 17.5 21.5 5l5 10.5 2.5-11 4 11.5c5.5.8 11 3 13.5 5.3 2.6 2.4 1.8 6.7-1.6 7.5l-8.4 1.6V56a4 4 0 0 1-4 4H22a4 4 0 0 1-4-4V24.5c0-2.6.6-5 2-7Z"/>
+  <circle cx="33.5" cy="20.5" r="2" fill="#2b2118"/>
+  <path stroke="#2b2118" stroke-width="2" stroke-linecap="round" d="M42 26.5h3"/>
+  <circle cx="49" cy="50" r="9" fill="#22c55e" stroke="#2b2118" stroke-width="2.5"/>
+  <path stroke="#fff" stroke-width="2.5" stroke-linecap="round" d="M46.5 46.5v7M51.5 46.5v7"/>
+</svg>
