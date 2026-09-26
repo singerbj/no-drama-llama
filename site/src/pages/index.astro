@@ -106,11 +106,37 @@ const fits = [
   { vram: '8 – 12 GB', example: '', model: '27B UD-IQ2_XXS, or Flash-Next with 96 GB+ RAM' },
 ];
 
-const states = [
-  { dot: 'running', label: 'Running', note: 'serving requests' },
-  { dot: 'paused', label: 'Paused for a game', note: 'VRAM freed' },
-  { dot: 'loading', label: 'Loading', note: 'game closed' },
-  { dot: 'running', label: 'Running', note: 'back to work' },
+// The hero demo: one pass through the pause cycle on a 24 GB card. Each step shows what fills
+// VRAM, and `then` is the event that moves it on to the next step.
+const cycle = [
+  {
+    tone: 'running',
+    state: 'Running',
+    note: 'Serving requests',
+    seg: 'llm',
+    fill: 75,
+    label: 'Qwen 3.8 27B · 18 GB',
+    then: 'You launch a game',
+  },
+  {
+    tone: 'paused',
+    state: 'Paused for a game',
+    note: 'Model stopped',
+    seg: 'game',
+    fill: 100,
+    label: 'Your game · all 24 GB',
+    then: 'You quit · it waits 60 s',
+  },
+  {
+    tone: 'loading',
+    state: 'Loading',
+    note: 'Model reloads',
+    seg: 'reload',
+    fill: 75,
+    label: 'Qwen 3.8 27B · 18 GB',
+    then: 'Ready · back to Running',
+    loop: true,
+  },
 ];
 
 const faqs = [
@@ -214,7 +240,7 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
             <p class="fineprint">One exe · installs in minutes · uninstall restores every setting</p>
           </div>
 
-          <div class="demo" aria-label="How No Drama Llama reacts to a game">
+          <div class="demo">
             <div class="popup" role="img" aria-label="On-screen popup: LLM paused, Example Game (Steam) detected, GPU freed">
               <span class="dot paused"></span>
               <div>
@@ -222,24 +248,32 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
                 <span>Example Game (Steam) detected · GPU freed</span>
               </div>
             </div>
-            <div class="window">
-              <div class="window-bar"><span></span><span></span><span></span><em>VRAM · 24 GB</em></div>
-              <div class="vram">
-                <div class="vram-row">
-                  <span class="vram-label">Before</span>
-                  <div class="bar"><span class="seg llm" style="width:78%">Qwen 3.8 27B</span></div>
-                </div>
-                <div class="vram-row">
-                  <span class="vram-label">In game</span>
-                  <div class="bar"><span class="seg game" style="width:92%">Your game</span></div>
-                </div>
-              </div>
-              <ol class="timeline">
-                {states.map((s) => (
-                  <li><span class={`dot ${s.dot}`}></span><strong>{s.label}</strong><em>{s.note}</em></li>
+            <figure class="window">
+              <figcaption class="window-bar">
+                <span></span><span></span><span></span>
+                <em>What’s in your VRAM · 24 GB</em>
+              </figcaption>
+              <ol class="cycle">
+                {cycle.map((c, i) => (
+                  <li class={`step tone-${c.tone}`} style={`--i:${i}`}>
+                    <div class="step-head">
+                      <span class={`dot ${c.tone}`}></span>
+                      <strong>{c.state}</strong>
+                      <em>{c.note}</em>
+                    </div>
+                    <div class="bar">
+                      <span class={`seg ${c.seg}`} style={`width:${c.fill}%`}>{c.label}</span>
+                      {c.fill < 100 && (
+                        <span class="free">{Math.round((24 * (100 - c.fill)) / 100)} GB<span class="free-word">&nbsp;free</span></span>
+                      )}
+                    </div>
+                    {c.then && (
+                      <p class="then"><span aria-hidden="true">{c.loop ? '↺' : '↓'}</span> {c.then}</p>
+                    )}
+                  </li>
                 ))}
               </ol>
-            </div>
+            </figure>
           </div>
         </div>
       </section>
@@ -303,8 +337,8 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
             <h2>The best model your PC can run</h2>
             <p class="section-lede">
               The installer measures your GPU and RAM and picks a model for you. Every model in the
-              catalog is rated <em>fits your GPU</em>, <em>GPU + RAM</em>, <em>partly in RAM</em> or
-              <em>too big</em>, and you can switch any time from the tray.
+              catalog is rated <em>fits your GPU</em>, <em>GPU + RAM</em>, <em>partly in RAM</em> or <em>too big</em>, and
+              you can switch any time from the tray.
             </p>
             <a class="link" href={docs('guides/models/')}>How models are chosen →</a>
           </div>
