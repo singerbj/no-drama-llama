@@ -11,6 +11,8 @@ pub struct InstallArgs {
     pub model: Option<String>,
     /// vulkan | cuda12 | cuda13, or None = pick for this PC
     pub backend: Option<String>,
+    /// Turn on Laya and install Ollaya
+    pub laya: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +52,7 @@ Commands:
       --skip-wake-on-lan      leave network adapter wake settings alone
       --llama-cpp-tag <tag>   install this llama.cpp build (default: latest)
       --update-llama-cpp      download llama.cpp again
+      --laya                  also run Laya, a decision model (installs Ollaya from ollaya.dev)
   uninstall    Remove everything and restore your settings
       --keep-models           move models to Downloads first
       --yes                   don't ask
@@ -121,6 +124,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
                     "--skip-power-settings" => a.skip_power = true,
                     "--skip-wake-on-lan" => a.skip_wol = true,
                     "--update-llama-cpp" => a.update_llama = true,
+                    "--laya" => a.laya = true,
                     "--llama-cpp-tag" => {
                         let t = flags
                             .next()
@@ -183,6 +187,9 @@ pub fn install_args_string(a: &InstallArgs) -> String {
     if let Some(b) = &a.backend {
         s += &format!(" --backend {b}");
     }
+    if a.laya {
+        s += " --laya";
+    }
     s
 }
 
@@ -227,6 +234,8 @@ mod tests {
             other => panic!("{other:?}"),
         };
         assert!(a.skip_model && a.skip_power && a.skip_wol && a.update_llama);
+        assert!(!a.laya);
+        assert!(matches!(p(&["install", "--laya"]), Ok(Command::Install(a)) if a.laya));
         assert_eq!(a.llama_tag.as_deref(), Some("b6500"));
         assert_eq!(
             p(&["install"]),
@@ -258,6 +267,7 @@ mod tests {
                 skip_model: true,
                 model: None,
                 backend: Some("cuda13".into()),
+                laya: true,
             },
             InstallArgs {
                 model: Some("qwen3.8-27b:UD-IQ3_XXS".into()),
@@ -353,6 +363,7 @@ mod tests {
             "--update-llama-cpp",
             "--keep-models",
             "--yes",
+            "--laya",
         ] {
             assert!(HELP.contains(w), "{w}");
         }
@@ -372,12 +383,12 @@ mod props {
 
         #[test]
         fn install_args_always_round_trip(
-            skip_model: bool, skip_power: bool, skip_wol: bool, update_llama: bool,
+            skip_model: bool, skip_power: bool, skip_wol: bool, update_llama: bool, laya: bool,
             tag in prop::option::of("[a-z0-9._-]{1,12}"),
             model in prop::option::of(prop::sample::select(crate::catalog::catalog().into_iter().map(|m| m.id).collect::<Vec<_>>())),
             backend in prop::option::of(prop::sample::select(vec!["vulkan".to_string(), "cuda12".to_string(), "cuda13".to_string()])),
         ) {
-            let a = InstallArgs { skip_model, skip_power, skip_wol, update_llama, llama_tag: tag, model, backend };
+            let a = InstallArgs { skip_model, skip_power, skip_wol, update_llama, llama_tag: tag, model, backend, laya };
             let s = install_args_string(&a);
             prop_assert_eq!(parse(s.split(' ').map(str::to_owned)), Ok(Command::Install(a)));
         }

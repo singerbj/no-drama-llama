@@ -69,6 +69,27 @@ impl Procs {
             .collect()
     }
 
+    /// PIDs of processes running an executable inside `dir` (any depth).
+    pub fn pids_under(&self, dir: &Path) -> Vec<u32> {
+        let mut prefix = dir.to_string_lossy().replace('/', "\\").to_lowercase();
+        if !prefix.ends_with('\\') {
+            prefix.push('\\');
+        }
+        self.sys
+            .processes()
+            .values()
+            .filter(|p| {
+                p.exe().is_some_and(|e| {
+                    e.to_string_lossy()
+                        .replace('/', "\\")
+                        .to_lowercase()
+                        .starts_with(&prefix)
+                })
+            })
+            .map(|p| p.pid().as_u32())
+            .collect()
+    }
+
     pub fn parent_of(&self, pid: u32) -> Option<u32> {
         self.sys
             .process(Pid::from_u32(pid))?

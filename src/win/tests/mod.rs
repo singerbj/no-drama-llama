@@ -4,6 +4,7 @@
 mod e2e;
 mod hf;
 mod http;
+mod laya;
 mod models;
 mod platform;
 

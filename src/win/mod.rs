@@ -2,6 +2,7 @@
 
 pub mod gpu;
 pub mod install;
+pub mod laya;
 pub mod libraries;
 pub mod models;
 pub mod net;
@@ -109,6 +110,7 @@ pub fn main() -> i32 {
                 skip_wol: a.skip_wol,
                 llama_tag: a.llama_tag,
                 update_llama: a.update_llama,
+                laya: a.laya,
                 model: a.model,
                 backend: a
                     .backend

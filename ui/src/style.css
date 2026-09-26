@@ -151,6 +151,13 @@ code {
   background: var(--error);
 }
 
+.dot.inline-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  vertical-align: -1px;
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.45;

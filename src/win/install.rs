@@ -1,7 +1,7 @@
 //! `install` / `uninstall`: everything the PowerShell edition's install.ps1 / uninstall.ps1
 //! did, plus migrating from it. Runs elevated in a console window.
 
-use super::{models, net, probe, procs::Procs, sys};
+use super::{laya as win_laya, models, net, probe, procs::Procs, sys};
 use crate::catalog::{self, CatalogModel};
 use crate::hardware::{self, Backend};
 use crate::paths::{self, Paths, APP_NAME, TASK_NAME};
@@ -30,6 +30,8 @@ pub struct InstallOptions {
     pub skip_wol: bool,
     pub llama_tag: Option<String>,
     pub update_llama: bool,
+    /// Turn on Laya (Ollaya) and install it now
+    pub laya: bool,
 }
 
 fn step(msg: &str) {
@@ -47,7 +49,7 @@ fn shortcut_path() -> PathBuf {
 
 // ------------------------------------------------------------------ stop / migrate
 
-/// Stops the tray app (either edition) and our llama-server.
+/// Stops the tray app (either edition), our llama-server and Ollaya.
 pub fn stop_running(p: &Paths) {
     let _ = sys::run("schtasks.exe", &["/end", "/tn", TASK_NAME]);
     let _ = sys::run("schtasks.exe", &["/end", "/tn", OLD_TASK]);
@@ -65,6 +67,7 @@ pub fn stop_running(p: &Paths) {
     pids.extend(procs.pids_with_cmdline("powershell.exe", "llm-guard.ps1"));
     procs.refresh();
     pids.extend(procs.pids_of(&p.server_exe));
+    pids.extend(win_laya::pids(&procs, p));
     procs.kill(&pids);
 }
 
@@ -290,6 +293,52 @@ fn install_model(p: &Paths, m: &CatalogModel) -> Result<()> {
     s.model = m.primary_file();
     s.save(&p.settings)?;
     println!("  Selected {}", m.primary_file());
+    Ok(())
+}
+
+/// Ollaya, when Laya is on (or `--laya` turns it on). The tray app downloads the Laya model
+/// once it starts.
+fn install_laya(p: &Paths, opts: &InstallOptions, nvidia: &[hardware::NvidiaGpu]) -> Result<()> {
+    let mut s = Settings::load(&p.settings).0;
+    if opts.laya && !s.run_laya {
+        s.run_laya = true;
+        s.save(&p.settings)?;
+    }
+    if !s.run_laya {
+        return Ok(());
+    }
+    step("Laya (Ollaya)");
+    let want_gpu = crate::laya::wants_gpu_pack(nvidia, s.laya_device);
+    let record = p.ollaya_record();
+    if !opts.laya && !crate::laya::needs_install(record.as_ref(), p.ollaya_exe.exists(), want_gpu) {
+        println!(
+            "  Keeping Ollaya {}",
+            record.map(|r| r.version).unwrap_or_default()
+        );
+        return Ok(());
+    }
+    println!(
+        "Downloading Ollaya{}...",
+        if want_gpu {
+            " and its NVIDIA GPU pack (about 1.1 GB)"
+        } else {
+            ""
+        }
+    );
+    std::fs::create_dir_all(&p.ollaya_dir)?;
+    let r = win_laya::install(
+        p,
+        &win_laya::release_api(),
+        want_gpu,
+        print_progress,
+        &std::sync::atomic::AtomicBool::new(false),
+    )?;
+    println!(
+        "\n  Ollaya {} installed ({}). The tray app downloads {} when it starts.",
+        r.version,
+        if r.gpu_pack { "NVIDIA GPU" } else { "CPU" },
+        s.laya_model
+    );
     Ok(())
 }
 
@@ -526,6 +575,7 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
         step("Model");
         install_model(&p, &m)?;
     }
+    install_laya(&p, opts, &nvidia)?;
 
     // Only on the first run, so re-running install never overwrites the original values.
     if !p.backup.exists() {
@@ -561,6 +611,9 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
         p.log.display(),
         exe.display()
     );
+    if s.run_laya {
+        println!("Laya (Ollaya API): {}", crate::laya::base_url(&s));
+    }
     Ok(())
 }
 

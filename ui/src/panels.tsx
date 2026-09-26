@@ -68,6 +68,14 @@ export function Overview() {
         <dd>
           <code>{view.chatUrl}</code>
         </dd>
+        {view.settings.RunLaya && (
+          <>
+            <dt>Laya</dt>
+            <dd>
+              {view.laya.statusText} · <code>{view.laya.url}</code>
+            </dd>
+          </>
+        )}
         <dt>Version</dt>
         <dd>{view.version}</dd>
       </dl>
@@ -209,6 +217,117 @@ export function ServerPanel() {
       />
       <p className="hint">Changes on this page and to the model restart the server when you save.</p>
     </Fieldset>
+  );
+}
+
+// ---------------------------------------------------------------- Laya
+
+// Mirror laya::MODELS, laya::KEEP_ALIVE_PRESETS and laya::Device::ALL.
+const LAYA_MODELS = [
+  ["laya", "Laya (picks English or multilingual per request)"],
+  ["laya:en", "Laya English (421M, the fastest)"],
+  ["laya:multilingual", "Laya multilingual (322M, 100+ languages)"],
+  ["laya:typed-decisions", "Laya typed-decisions"],
+] as const;
+
+const KEEP_ALIVE = [
+  ["-1", "Always (until paused or off)"],
+  ["1h", "1 hour after the last request"],
+  ["30m", "30 minutes after the last request"],
+  ["5m", "5 minutes after the last request"],
+  ["0", "Unload after each request"],
+] as const;
+
+/** The presets, plus the saved value when settings.json has something else. */
+function withSaved(presets: readonly (readonly [string, string])[], saved: string) {
+  return presets.some(([v]) => v === saved) ? presets : [...presets, [saved, saved] as const];
+}
+
+export function LayaPanel() {
+  const form = useForm();
+  const l = form.view.laya;
+  const on = form.value("RunLaya");
+  const job = l.job;
+  const progress = job && job.total ? job.done / job.total : 0;
+  return (
+    <>
+      <p className="hint">
+        Laya is a <i>decision model</i>: it answers typed questions about a text (pick one of these options, score it,
+        yes or no) in milliseconds, instead of writing text. Ollaya (ollaya.dev) serves it next to the LLM, with the
+        same on/off switch and pause while gaming.
+      </p>
+      <Fieldset>
+        <Toggle
+          k="RunLaya"
+          label="Run Laya alongside the LLM"
+          hint="Installs Ollaya (about 25 MB, plus 1.1 GB on NVIDIA GPUs) and downloads the model (about 1 GB)."
+        />
+      </Fieldset>
+      {form.view.settings.RunLaya && (
+        <>
+          <dl className="facts">
+            <dt>Status</dt>
+            <dd>
+              <span className={`dot inline-dot ${l.tone}`} /> {l.statusText}
+            </dd>
+            <dt>API</dt>
+            <dd>
+              <code>{l.url}</code> (Ollaya and TypeSafe-compatible: <code>/api/decide</code>, <code>/v1/systemone</code>
+              )
+            </dd>
+            <dt>Ollaya</dt>
+            <dd>{l.version ?? "not installed yet"}</dd>
+          </dl>
+          {job && (
+            <div className="download">
+              <div className="download-head">
+                <span>
+                  Downloading <b>{job.label}</b>
+                </span>
+              </div>
+              <progress max={1} value={progress} />
+              <small>
+                {job.total ? `${gb(job.done)} of ${gb(job.total)} (${Math.floor(progress * 100)}%)` : "Starting..."}
+              </small>
+            </div>
+          )}
+          <div className="row-buttons">
+            <Btn cmd="restart_laya">Restart Laya</Btn>
+            <Btn cmd="update_laya" disabled={l.checking || !!job}>
+              {l.update ? `Install Ollaya ${l.update}` : l.checking ? "Checking..." : "Check for Ollaya updates"}
+            </Btn>
+            <Btn cmd="view_laya_log">View Laya log</Btn>
+          </div>
+        </>
+      )}
+      <Fieldset legend="Model" disabled={!on}>
+        <Choice
+          k="LayaModel"
+          label="Model"
+          hint="Other Ollaya models (decider, nli, ...) can go in the settings file."
+          options={withSaved(LAYA_MODELS, form.saved("LayaModel"))}
+        />
+        <Choice
+          k="LayaKeepAlive"
+          label="Keep the model loaded"
+          options={withSaved(KEEP_ALIVE, form.saved("LayaKeepAlive"))}
+        />
+      </Fieldset>
+      <Fieldset legend="Server" disabled={!on}>
+        <NumberField k="LayaPort" label="Port" hint="1024 - 65535, not the LLM's port" min={1024} max={65535} integer />
+        <Choice
+          k="LayaDevice"
+          label="Run on"
+          hint="On the CPU, Laya keeps running while you play; on the GPU it pauses with the LLM."
+          options={[
+            ["auto", "Auto (NVIDIA GPU if there is one)"],
+            ["cpu", "CPU only"],
+            ["cuda", "NVIDIA GPU only"],
+          ]}
+        />
+        <p className="hint">Access and the API key are the LLM's (Server &amp; API). Changes restart Laya.</p>
+      </Fieldset>
+    </>
   );
 }
 

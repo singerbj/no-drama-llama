@@ -25,6 +25,11 @@ const settings: Settings = {
   GpuIgnore: ["obs64"],
   AutoUpdate: true,
   StartWithWindows: true,
+  RunLaya: false,
+  LayaModel: "laya",
+  LayaPort: 11435,
+  LayaDevice: "auto",
+  LayaKeepAlive: "-1",
 };
 
 export function mockApi(): Api {
@@ -73,6 +78,16 @@ export function mockApi(): Api {
       canDownload: !installed && fit !== "tooBig",
     })),
     download: null,
+    laya: {
+      tone: "off",
+      statusText: "Not running (turn it on in settings)",
+      ready: false,
+      url: "http://127.0.0.1:11435",
+      version: null,
+      update: null,
+      checking: false,
+      job: null,
+    },
   };
   const push = () => setTimeout(() => onState?.(structuredClone(view)), 50);
   return {
@@ -89,9 +104,24 @@ export function mockApi(): Api {
           const warnings =
             r.settings.Port !== undefined && r.settings.Port < 1024 ? ["invalid Port - not changed"] : [];
           Object.assign(view.settings, r.settings);
+          if (r.settings.RunLaya) {
+            view.laya = {
+              ...view.laya,
+              tone: "loading",
+              statusText: `Downloading ${view.settings.LayaModel}...`,
+              version: "0.5.0",
+              job: { id: "laya-download", label: view.settings.LayaModel, done: 0.4e9, total: 1e9 },
+            };
+          }
           setTimeout(() => onSaved?.({ warnings }), 30);
           break;
         }
+        case "check_for_updates":
+          view.update = { state: "available", version: "2.2.0" };
+          break;
+        case "update_laya":
+          view.laya = { ...view.laya, update: "0.6.0" };
+          break;
         case "download": {
           const m = view.catalog.find((c) => c.id === r.id)!;
           view.download = { id: m.id, label: m.label, done: 0.37 * m.size, total: m.size };
@@ -100,9 +130,6 @@ export function mockApi(): Api {
         }
         case "cancel_download":
           view.download = null;
-          break;
-        case "check_for_updates":
-          view.update = { state: "available", version: "2.2.0" };
           break;
       }
       push();

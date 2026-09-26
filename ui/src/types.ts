@@ -4,6 +4,7 @@ export type Tone = "running" | "loading" | "paused" | "off" | "error";
 export type Reasoning = "none" | "low" | "medium" | "xhigh";
 export type DetectionMode = "Both" | "Gpu" | "Launchers";
 export type PopupPosition = "TopCenter" | "TopRight" | "BottomRight" | "BottomCenter";
+export type LayaDevice = "auto" | "cpu" | "cuda";
 
 export interface Settings {
   Model: string;
@@ -26,6 +27,13 @@ export interface Settings {
   GpuIgnore: string[];
   AutoUpdate: boolean;
   StartWithWindows: boolean;
+  RunLaya: boolean;
+  /** An Ollaya model name: laya, laya:en, laya:multilingual, ... */
+  LayaModel: string;
+  LayaPort: number;
+  LayaDevice: LayaDevice;
+  /** Ollaya keep_alive: "-1" = always loaded, "5m", "0" = unload after each request */
+  LayaKeepAlive: string;
 }
 
 export type SettingKey = keyof Settings;
@@ -61,6 +69,17 @@ export interface DownloadView {
   total: number;
 }
 
+export interface LayaView {
+  tone: Tone;
+  statusText: string;
+  ready: boolean;
+  url: string;
+  version: string | null;
+  update: string | null;
+  checking: boolean;
+  job: DownloadView | null;
+}
+
 export interface View {
   version: string;
   tone: Tone;
@@ -78,6 +97,7 @@ export interface View {
   models: InstalledModel[];
   catalog: CatalogEntry[];
   download: DownloadView | null;
+  laya: LayaView;
 }
 
 export type Request =
@@ -96,7 +116,10 @@ export type Request =
         | "open_models"
         | "view_log"
         | "edit_settings_file"
-        | "exit";
+        | "exit"
+        | "restart_laya"
+        | "update_laya"
+        | "view_laya_log";
     }
   | { cmd: "download"; id: string }
   | { cmd: "save"; settings: Partial<Settings> };

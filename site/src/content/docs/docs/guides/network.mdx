@@ -33,6 +33,10 @@ Without an `ApiKey`, anyone on your network can use the model. Never forward por
 router: put a VPN such as WireGuard or Tailscale in front of it instead.
 </Aside>
 
+Laya, when it's on, follows the same **Access** and API key on its own port (`LayaPort`, `11435`
+by default). Allow that port through the firewall too if other devices use it. See
+[Laya](/docs/guides/laya/).
+
 ## Change the port
 
 Set `Port` (1024 – 65535) in the [settings file](/docs/reference/settings/). The default is

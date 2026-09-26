@@ -3,7 +3,9 @@
 //! window and another reads from it.
 
 use super::worker::{Snapshot, UpdateState};
-use crate::control::{self, DownloadView, Event, InstalledModel, Request, UpdateView, View};
+use crate::control::{
+    self, DownloadView, Event, InstalledModel, LayaView, Request, UpdateView, View,
+};
 use crate::log;
 use crate::state::Status;
 use std::io::{BufRead, BufReader, Write};
@@ -159,6 +161,21 @@ fn view(s: &Snapshot) -> View {
             done: d.done,
             total: d.total,
         }),
+        laya: LayaView {
+            tone: s.laya.status.tone(),
+            status_text: s.laya.status_text.clone(),
+            ready: s.laya.status == crate::laya::Status::Ready,
+            url: s.laya.url.clone(),
+            version: s.laya.version.clone(),
+            update: s.laya.update.clone(),
+            checking: s.laya.checking,
+            job: s.laya.job.as_ref().map(|d| DownloadView {
+                id: d.id.clone(),
+                label: d.label.clone(),
+                done: d.done,
+                total: d.total,
+            }),
+        },
         settings: s.settings.clone(),
     }
 }
