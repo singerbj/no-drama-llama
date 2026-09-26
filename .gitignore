@@ -1,3 +1,4 @@
 testResults.xml
 dist/
 *.zip
+rust/target/

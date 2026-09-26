@@ -1,0 +1,626 @@
+//! The tray app's UI thread: tray icon + menu, Ctrl+Alt+L hotkey, on-screen popups. All
+//! real work happens on the worker thread; this thread only renders snapshots and forwards
+//! clicks, so the menu never freezes.
+
+use super::worker::{Cmd, Snapshot, UiMsg, UpdateState, Worker};
+use super::{osd, sys};
+use crate::log;
+use crate::paths::{self, Paths};
+use crate::settings::{DetectionMode, PopupPosition, Reasoning, Settings};
+use crate::state::{Status, Tone};
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
+use tray_icon::menu::{
+    CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+};
+use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, GetMessageW, PostQuitMessage, SetTimer, TranslateMessage, MSG, WM_TIMER,
+};
+
+type Edit = Arc<dyn Fn(&mut Settings) + Send + Sync>;
+type Pred = Box<dyn Fn(&Snapshot) -> bool>;
+
+#[derive(Clone)]
+enum Act {
+    Toggle,
+    OpenChat,
+    Restart,
+    Edit(Edit),
+    IgnoreGame,
+    GpuReport,
+    Libraries,
+    TestPopup,
+    StartWithWindows,
+    CheckUpdates,
+    EditSettings,
+    OpenFolder,
+    ViewLog,
+    Exit,
+}
+
+fn edit(f: impl Fn(&mut Settings) + Send + Sync + 'static) -> Act {
+    Act::Edit(Arc::new(f))
+}
+
+pub(crate) const ICON_SIZE: usize = 32;
+
+/// 32x32 anti-aliased status dot (RGBA).
+pub(crate) fn dot_rgba(t: Tone) -> Vec<u8> {
+    let (r, g, b) = osd::tone_rgb(t);
+    const N: usize = ICON_SIZE;
+    let mut rgba = vec![0u8; N * N * 4];
+    let (c, radius) = (N as f32 / 2.0, 12.5f32);
+    for y in 0..N {
+        for x in 0..N {
+            let d = ((x as f32 + 0.5 - c).powi(2) + (y as f32 + 0.5 - c).powi(2)).sqrt();
+            let cover = (radius + 0.5 - d).clamp(0.0, 1.0);
+            let edge = (d - (radius - 2.0)).clamp(0.0, 1.0) * 0.55; // dark outline
+            let px = &mut rgba[(y * N + x) * 4..][..4];
+            let mix = |v: u8| (v as f32 * (1.0 - edge)) as u8;
+            px.copy_from_slice(&[mix(r), mix(g), mix(b), (cover * 255.0) as u8]);
+        }
+    }
+    rgba
+}
+
+fn dot_icon(t: Tone) -> Icon {
+    Icon::from_rgba(dot_rgba(t), ICON_SIZE as u32, ICON_SIZE as u32).expect("valid icon")
+}
+
+struct Ui {
+    menu: Menu,
+    status: MenuItem,
+    toggle: MenuItem,
+    open: MenuItem,
+    restart: MenuItem,
+    models: Submenu,
+    models_shown: Vec<(String, u64)>,
+    model_checks: Vec<(CheckMenuItem, String)>,
+    not_game: MenuItem,
+    update: MenuItem,
+    gpu_only: Vec<Submenu>,
+    checks: Vec<(CheckMenuItem, Pred)>,
+    actions: HashMap<MenuId, Act>,
+    snap: Option<Snapshot>,
+    icons: HashMap<Tone, Icon>,
+    tone: Option<Tone>,
+}
+
+impl Ui {
+    fn item(&mut self, parent: &dyn Append, text: &str, act: Act) -> MenuItem {
+        let i = MenuItem::new(text, true, None);
+        self.actions.insert(i.id().clone(), act);
+        parent.add(&i);
+        i
+    }
+
+    fn check(
+        &mut self,
+        parent: &dyn Append,
+        text: &str,
+        act: Act,
+        pred: impl Fn(&Snapshot) -> bool + 'static,
+    ) {
+        let i = CheckMenuItem::new(text, true, false, None);
+        self.actions.insert(i.id().clone(), act);
+        parent.add(&i);
+        self.checks.push((i, Box::new(pred)));
+    }
+}
+
+/// `Menu` and `Submenu` both take items.
+trait Append {
+    fn add(&self, item: &dyn IsMenuItem);
+}
+impl Append for Menu {
+    fn add(&self, item: &dyn IsMenuItem) {
+        let _ = self.append(item);
+    }
+}
+impl Append for Submenu {
+    fn add(&self, item: &dyn IsMenuItem) {
+        let _ = self.append(item);
+    }
+}
+
+fn sep(parent: &dyn Append) {
+    parent.add(&PredefinedMenuItem::separator());
+}
+
+fn build() -> Ui {
+    let menu = Menu::new();
+    let mut ui = Ui {
+        status: MenuItem::new("Starting...", false, None),
+        toggle: MenuItem::new("Turn off", true, None),
+        open: MenuItem::new("Open chat", true, None),
+        restart: MenuItem::new("Restart server", true, None),
+        models: Submenu::new("Model", true),
+        models_shown: Vec::new(),
+        model_checks: Vec::new(),
+        not_game: MenuItem::new("Not a game - ignore this app", false, None),
+        update: MenuItem::new("Check for updates", true, None),
+        gpu_only: Vec::new(),
+        checks: Vec::new(),
+        actions: HashMap::new(),
+        snap: None,
+        icons: [
+            Tone::Running,
+            Tone::Loading,
+            Tone::Paused,
+            Tone::Off,
+            Tone::Error,
+        ]
+        .into_iter()
+        .map(|t| (t, dot_icon(t)))
+        .collect(),
+        tone: None,
+        menu: menu.clone(),
+    };
+    menu.add(&ui.status);
+    sep(&menu);
+    for (i, a) in [
+        (ui.toggle.clone(), Act::Toggle),
+        (ui.open.clone(), Act::OpenChat),
+        (ui.restart.clone(), Act::Restart),
+    ] {
+        ui.actions.insert(i.id().clone(), a);
+        menu.add(&i);
+    }
+    sep(&menu);
+
+    let settings = Submenu::new("Settings", true);
+    menu.add(&settings);
+    settings.add(&ui.models);
+
+    let reasoning = Submenu::new("Reasoning", true);
+    settings.add(&reasoning);
+    for r in Reasoning::ALL {
+        ui.check(
+            &reasoning,
+            r.as_str(),
+            edit(move |s| s.reasoning = r),
+            move |n| n.settings.reasoning == r,
+        );
+    }
+    let ctx = Submenu::new("Context length", true);
+    settings.add(&ctx);
+    for c in [8192u32, 16384, 32768, 65536, 131072] {
+        ui.check(
+            &ctx,
+            &format!("{}K tokens", c / 1024),
+            edit(move |s| s.context = c),
+            move |n| n.settings.context == c,
+        );
+    }
+    let access = Submenu::new("Access", true);
+    settings.add(&access);
+    for (label, host) in [
+        ("This PC only", "127.0.0.1"),
+        ("Devices on my network", "0.0.0.0"),
+    ] {
+        ui.check(
+            &access,
+            label,
+            edit(move |s| s.listen_host = host.into()),
+            move |n| n.settings.listen_host == host,
+        );
+    }
+    sep(&settings);
+
+    let games = Submenu::new("Game detection", true);
+    settings.add(&games);
+    ui.check(
+        &games,
+        "Pause while gaming",
+        edit(|s| s.pause_while_gaming = !s.pause_while_gaming),
+        |n| n.settings.pause_while_gaming,
+    );
+    sep(&games);
+    let mode = Submenu::new("Detect games by", true);
+    games.add(&mode);
+    for (label, m) in [
+        ("GPU usage + launchers (recommended)", DetectionMode::Both),
+        ("GPU usage only", DetectionMode::Gpu),
+        ("Launchers only", DetectionMode::Launchers),
+    ] {
+        ui.check(
+            &mode,
+            label,
+            edit(move |s| s.detection_mode = m),
+            move |n| n.settings.detection_mode == m,
+        );
+    }
+    let vram = Submenu::new("GPU: VRAM threshold", true);
+    games.add(&vram);
+    for v in [1.0f64, 1.5, 2.0, 3.0, 4.0] {
+        ui.check(
+            &vram,
+            &format!("Another app uses {v} GB+"),
+            edit(move |s| s.gpu_vram_gb = v),
+            move |n| n.settings.gpu_vram_gb == v,
+        );
+    }
+    let load = Submenu::new("GPU: 3D load threshold", true);
+    games.add(&load);
+    for v in [20.0f64, 30.0, 50.0, 70.0] {
+        ui.check(
+            &load,
+            &format!("Another app uses {v}%+"),
+            edit(move |s| s.gpu_load_pct = v),
+            move |n| n.settings.gpu_load_pct == v,
+        );
+    }
+    ui.gpu_only = vec![vram, load];
+    let resume = Submenu::new("Resume after game closes", true);
+    games.add(&resume);
+    for v in [15u32, 30, 60, 120, 300] {
+        let label = if v < 60 {
+            format!("{v} seconds")
+        } else {
+            format!("{} min", v / 60)
+        };
+        ui.check(
+            &resume,
+            &label,
+            edit(move |s| s.resume_after_sec = v),
+            move |n| n.settings.resume_after_sec == v,
+        );
+    }
+    ui.actions.insert(ui.not_game.id().clone(), Act::IgnoreGame);
+    games.add(&ui.not_game.clone());
+    ui.item(&games, "Show GPU usage now", Act::GpuReport);
+    sep(&games);
+    ui.check(
+        &games,
+        "Count emulators as games",
+        edit(|s| s.detect_emulators = !s.detect_emulators),
+        |n| n.settings.detect_emulators,
+    );
+    ui.check(
+        &games,
+        "Use Windows' game list (Game Bar)",
+        edit(|s| s.use_windows_game_list = !s.use_windows_game_list),
+        |n| n.settings.use_windows_game_list,
+    );
+    sep(&games);
+    ui.item(&games, "Rescan and show detected libraries", Act::Libraries);
+
+    let popups = Submenu::new("On-screen popups", true);
+    settings.add(&popups);
+    ui.check(
+        &popups,
+        "Show popups",
+        edit(|s| s.popups = !s.popups),
+        |n| n.settings.popups,
+    );
+    sep(&popups);
+    for (p, label) in PopupPosition::ALL {
+        ui.check(
+            &popups,
+            label,
+            edit(move |s| s.popup_position = p),
+            move |n| n.settings.popup_position == p,
+        );
+    }
+    sep(&popups);
+    ui.item(&popups, "Test popup", Act::TestPopup);
+
+    ui.check(
+        &settings,
+        "Start with Windows",
+        Act::StartWithWindows,
+        |n| n.start_with_windows,
+    );
+    ui.check(
+        &settings,
+        "Update automatically",
+        edit(|s| s.auto_update = !s.auto_update),
+        |n| n.settings.auto_update,
+    );
+    sep(&settings);
+    ui.item(&settings, "Edit settings file", Act::EditSettings);
+
+    ui.actions.insert(ui.update.id().clone(), Act::CheckUpdates);
+    menu.add(&ui.update.clone());
+    ui.item(&menu, "Open folder", Act::OpenFolder);
+    ui.item(&menu, "View log", Act::ViewLog);
+    sep(&menu);
+    ui.item(&menu, "Exit (stops the model)", Act::Exit);
+    ui
+}
+
+impl Ui {
+    fn render(&mut self, tray: &TrayIcon, snap: Snapshot) {
+        let tone = snap.status.tone();
+        if self.tone != Some(tone) {
+            let _ = tray.set_icon(self.icons.get(&tone).cloned());
+            self.tone = Some(tone);
+        }
+        let tip: String = format!("{}: {}", paths::APP_NAME, snap.status_text)
+            .chars()
+            .take(127)
+            .collect();
+        let _ = tray.set_tooltip(Some(tip));
+        self.status.set_text(&snap.status_text);
+        self.toggle.set_text(if snap.status == Status::Off {
+            "Turn on"
+        } else {
+            "Turn off"
+        });
+        self.open.set_enabled(snap.status == Status::Running);
+        self.restart
+            .set_enabled(!matches!(snap.status, Status::Off | Status::Paused(_)));
+        match (&snap.status, &snap.game_process) {
+            (Status::Paused(_), Some(p)) => {
+                self.not_game.set_text(format!("Not a game - ignore {p}"));
+                self.not_game.set_enabled(true);
+            }
+            _ => {
+                self.not_game.set_text("Not a game - ignore this app");
+                self.not_game.set_enabled(false);
+            }
+        }
+        let (text, enabled) = match &snap.update {
+            UpdateState::None => ("Check for updates".to_string(), true),
+            UpdateState::Checking => ("Checking for updates...".to_string(), false),
+            UpdateState::Available(v) => {
+                (format!("Update available: {v} (open download page)"), true)
+            }
+            UpdateState::Installing(v) => (format!("Installing update {v}..."), false),
+        };
+        self.update.set_text(text);
+        self.update.set_enabled(enabled);
+        for g in &self.gpu_only {
+            g.set_enabled(snap.settings.detection_mode.uses_gpu());
+        }
+        for (item, pred) in &self.checks {
+            item.set_checked(pred(&snap));
+        }
+        if snap.models != self.models_shown {
+            while self.models.remove_at(0).is_some() {}
+            for (item, _) in self.model_checks.drain(..) {
+                self.actions.remove(item.id());
+            }
+            for (name, size) in &snap.models {
+                let n = name.clone();
+                let i = CheckMenuItem::new(
+                    format!("{name}  ({:.1} GB)", *size as f64 / 1e9),
+                    true,
+                    false,
+                    None,
+                );
+                self.actions
+                    .insert(i.id().clone(), edit(move |s| s.model = n.clone()));
+                let _ = self.models.append(&i);
+                self.model_checks.push((i, name.clone()));
+            }
+            if snap.models.is_empty() {
+                let _ = self.models.append(&MenuItem::new(
+                    "(no .gguf files in C:\\LLM\\models)",
+                    false,
+                    None,
+                ));
+            }
+            self.models_shown = snap.models.clone();
+        }
+        for (item, name) in &self.model_checks {
+            item.set_checked(snap.settings.model == *name);
+        }
+        self.snap = Some(snap);
+    }
+
+    fn popup(&self, title: &str, sub: &str, tone: Tone) {
+        let pos = self
+            .snap
+            .as_ref()
+            .map(|s| s.settings.popup_position)
+            .unwrap_or(PopupPosition::TopCenter);
+        osd::show(title, sub, tone, pos);
+    }
+
+    fn chat_url(&self) -> Option<String> {
+        self.snap
+            .as_ref()
+            .map(|s| crate::server::chat_url(&s.settings))
+    }
+
+    fn on_menu(&mut self, id: &MenuId, p: &Paths, tx: &Sender<Cmd>) {
+        let Some(act) = self.actions.get(id).cloned() else {
+            return;
+        };
+        let send = |c: Cmd| {
+            let _ = tx.send(c);
+        };
+        match act {
+            Act::Toggle => send(Cmd::Toggle),
+            Act::Restart => send(Cmd::Restart),
+            Act::Edit(f) => send(Cmd::Edit(Box::new(move |s| f(s)))),
+            Act::IgnoreGame => send(Cmd::IgnoreCurrentGame),
+            Act::GpuReport => send(Cmd::ShowGpuReport),
+            Act::Libraries => send(Cmd::ShowLibraries),
+            Act::StartWithWindows => send(Cmd::SetStartWithWindows(
+                !self.snap.as_ref().is_some_and(|s| s.start_with_windows),
+            )),
+            Act::CheckUpdates => match self.snap.as_ref().map(|s| &s.update) {
+                Some(UpdateState::Available(_)) => sys::open_unelevated(Path::new(&format!(
+                    "https://github.com/{}/releases/latest",
+                    paths::REPO
+                ))),
+                _ => send(Cmd::CheckForUpdates { manual: true }),
+            },
+            Act::Exit => send(Cmd::Exit),
+            Act::OpenChat => {
+                if let Some(u) = self.chat_url() {
+                    sys::open_unelevated(Path::new(&u));
+                }
+            }
+            Act::TestPopup => osd::show(
+                "LLM paused",
+                "Example Game (Steam) detected  -  GPU freed",
+                Tone::Paused,
+                self.snap
+                    .as_ref()
+                    .map(|s| s.settings.popup_position)
+                    .unwrap_or(PopupPosition::TopCenter),
+            ),
+            Act::EditSettings => sys::open_in_notepad(&p.settings),
+            Act::OpenFolder => sys::open_unelevated(&p.root),
+            Act::ViewLog => sys::open_in_notepad(&p.log),
+        }
+    }
+}
+
+fn lock_if_auto_signed_in_at_boot() {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    let auto = winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon")
+        .and_then(|k| k.get_value::<String, _>("AutoAdminLogon"))
+        .is_ok_and(|v| v == "1");
+    let uptime_ms = unsafe { windows::Win32::System::SystemInformation::GetTickCount64() };
+    // After an automatic sign-in right after boot (power loss, update restart), lock the
+    // screen. Only with auto sign-in: someone who just typed their password stays signed in.
+    if auto && uptime_ms < 3 * 60 * 1000 {
+        log!(
+            "automatic sign-in at boot (uptime {}s) - locking screen",
+            uptime_ms / 1000
+        );
+        unsafe {
+            let _ = windows::Win32::System::Shutdown::LockWorkStation();
+        }
+    }
+}
+
+pub fn run(p: Paths, after_update: Option<String>) -> i32 {
+    unsafe {
+        use windows::Win32::UI::HiDpi::{
+            SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+    let wait = if after_update.is_some() { 20_000 } else { 0 };
+    let _instance = match sys::SingleInstance::acquire(wait) {
+        Ok(Some(i)) => i,
+        Ok(None) => return 0, // already running
+        Err(e) => {
+            sys::message(&format!("Couldn't start: {e}"), true);
+            return 1;
+        }
+    };
+    let _ = std::fs::create_dir_all(&p.data_dir);
+    log::init(&p.log);
+    log!("tray started (v{})", env!("CARGO_PKG_VERSION"));
+    lock_if_auto_signed_in_at_boot();
+
+    let (tx_cmd, rx_cmd) = mpsc::channel::<Cmd>();
+    let (tx_ui, rx_ui) = mpsc::channel::<UiMsg>();
+    {
+        let (p, tx_self) = (p.clone(), tx_cmd.clone());
+        std::thread::Builder::new()
+            .name("worker".into())
+            .spawn(move || Worker::new(p, tx_ui, tx_self).run(rx_cmd))
+            .expect("spawn worker");
+    }
+
+    let mut ui = build();
+    let tray = match TrayIconBuilder::new()
+        .with_menu(Box::new(ui.menu.clone()))
+        .with_tooltip(paths::APP_NAME)
+        .with_icon(ui.icons[&Tone::Loading].clone())
+        .build()
+    {
+        Ok(t) => t,
+        Err(e) => {
+            log!("couldn't create the tray icon: {e}");
+            return 1;
+        }
+    };
+
+    let hotkeys = GlobalHotKeyManager::new().ok();
+    let hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyL);
+    if let Some(Err(e)) = hotkeys.as_ref().map(|m| m.register(hotkey)) {
+        log!("couldn't register Ctrl+Alt+L: {e}");
+    }
+
+    if let Some(old) = &after_update {
+        ui.popup(
+            "No Drama Llama updated",
+            &format!("v{old} -> v{}", env!("CARGO_PKG_VERSION")),
+            Tone::Running,
+        );
+    }
+
+    let mut relaunch: Option<String> = None;
+    unsafe {
+        SetTimer(None, 0, 100, None);
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            if msg.message == WM_TIMER && msg.hwnd.0.is_null() {
+                if let Some(r) = pump(&mut ui, &tray, &p, &tx_cmd, &rx_ui, hotkey.id()) {
+                    relaunch = r;
+                    PostQuitMessage(0);
+                }
+                continue;
+            }
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    drop(tray);
+    log!("tray exited");
+    if let Some(old) = relaunch {
+        drop(_instance); // let the new version take over
+        let _ = std::process::Command::new(paths::installed_exe())
+            .args(["run", "--after-update", &old])
+            .spawn();
+    }
+    0
+}
+
+/// Handles queued events. `Some(relaunch)` means quit.
+fn pump(
+    ui: &mut Ui,
+    tray: &TrayIcon,
+    p: &Paths,
+    tx: &Sender<Cmd>,
+    rx: &Receiver<UiMsg>,
+    hotkey_id: u32,
+) -> Option<Option<String>> {
+    while let Ok(e) = MenuEvent::receiver().try_recv() {
+        ui.on_menu(&e.id, p, tx);
+    }
+    while let Ok(e) = TrayIconEvent::receiver().try_recv() {
+        if let TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+        } = e
+        {
+            if ui
+                .snap
+                .as_ref()
+                .is_some_and(|s| s.status == Status::Running)
+            {
+                if let Some(u) = ui.chat_url() {
+                    sys::open_unelevated(Path::new(&u));
+                }
+            }
+        }
+    }
+    while let Ok(e) = GlobalHotKeyEvent::receiver().try_recv() {
+        if e.id == hotkey_id && e.state == HotKeyState::Pressed {
+            let _ = tx.send(Cmd::Toggle);
+        }
+    }
+    while let Ok(m) = rx.try_recv() {
+        match m {
+            UiMsg::State(s) => ui.render(tray, *s),
+            UiMsg::Popup(pp) => ui.popup(&pp.title, &pp.subtitle, pp.tone),
+            UiMsg::Quit(r) => return Some(r),
+        }
+    }
+    None
+}

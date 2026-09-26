@@ -1,0 +1,23 @@
+﻿{
+    "Model":  "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+    "Reasoning":  "high",
+    "Context":  65536,
+    "ListenHost":  "0.0.0.0",
+    "Port":  8080,
+    "PauseWhileGaming":  true,
+    "DetectEmulators":  false,
+    "UseWindowsGameList":  true,
+    "Popups":  true,
+    "PopupPosition":  "BottomRight",
+    "ExtraGames":  [
+                       "mygame"
+                   ],
+    "DetectionMode":  "Both",
+    "GpuVramGB":  2,
+    "GpuLoadPct":  30,
+    "ResumeAfterSec":  120,
+    "GpuIgnore":  [
+
+                  ],
+    "ApiKey":  "s3cret"
+}

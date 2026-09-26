@@ -1,35 +1,87 @@
 name: Release
 
-# Push a tag like v1.1.0 (matching $AppVersion in src/config.ps1) to publish a zip
-# with the scripts at the top level, ready to extract and run install.ps1.
+# Push a tag like v2.0.0 (matching `version` in rust/Cargo.toml) to publish:
+#   no-drama-llama.exe          the app (installs itself when run)
+#   no-drama-llama.exe.minisig  minisign signature the in-app updater checks
+#   SHA256SUMS
+#
+# One-time setup (see docs/releasing.md):
+#   repository variable  UPDATE_PUBKEY       minisign public key (the base64 line of minisign.pub)
+#   repository secret    UPDATE_SIGNING_KEY  matching secret key file contents (unencrypted, `minisign -G -W`)
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  release:
+  build:
     runs-on: windows-latest
     defaults:
       run:
-        shell: powershell
+        working-directory: rust
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
-      - name: Lint + tests
-        run: ./tools/Invoke-Checks.ps1 -InstallDependencies
-      - name: Check tag matches $AppVersion
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
+      - name: Tag must match Cargo.toml version
         run: |
-          . ./src/config.ps1
-          if ("v$AppVersion" -ne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match `$AppVersion $AppVersion in src/config.ps1" }
-      - name: Build zip
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match Cargo.toml version $v" }
+      - name: Tests
         run: |
-          New-Item -ItemType Directory dist | Out-Null
-          Copy-Item src/*.ps1, README.md, CHANGELOG.md dist/
-          Compress-Archive dist/* "no-drama-llama-$env:GITHUB_REF_NAME.zip"
-          (Get-FileHash "no-drama-llama-$env:GITHUB_REF_NAME.zip" -Algorithm SHA256).Hash
+          cargo build --examples
+          cargo test
+      - name: Build (update public key baked in)
+        env:
+          NDL_UPDATE_PUBKEY: ${{ vars.UPDATE_PUBKEY }}
+        run: |
+          if (-not $env:NDL_UPDATE_PUBKEY) { Write-Warning "UPDATE_PUBKEY is not set: this build can't auto-update (it will only tell users a new version exists)." }
+          cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe
+          path: rust/target/release/no-drama-llama.exe
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: exe
+      - name: Sign for the in-app updater
+        env:
+          SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          PUBKEY: ${{ vars.UPDATE_PUBKEY }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ -z "$SIGNING_KEY" ] && [ -z "$PUBKEY" ]; then
+            echo "::warning::No update signing key configured - publishing without a signature (auto-update disabled)."
+            exit 0
+          fi
+          if [ -z "$SIGNING_KEY" ] || [ -z "$PUBKEY" ]; then
+            echo "::error::Set both UPDATE_PUBKEY (variable) and UPDATE_SIGNING_KEY (secret), or neither."
+            exit 1
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/update.key"
+          # The trusted comment binds the signature to this exact version (the app checks it).
+          minisign -S -s "$RUNNER_TEMP/update.key" -m no-drama-llama.exe -x no-drama-llama.exe.minisig -t "no-drama-llama $version"
+          rm -f "$RUNNER_TEMP/update.key"
+          minisign -V -P "$PUBKEY" -m no-drama-llama.exe -x no-drama-llama.exe.minisig
+      - name: Checksums
+        run: sha256sum no-drama-llama.exe* > SHA256SUMS && cat SHA256SUMS
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:GITHUB_REF_NAME "no-drama-llama-$env:GITHUB_REF_NAME.zip" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" no-drama-llama.exe* SHA256SUMS --repo "$GITHUB_REPOSITORY" --generate-notes
