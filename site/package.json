@@ -18,9 +18,9 @@
     "astro": "^7.3.5",
     "satteri": "^0.10.5",
     "sharp": "^0.35.4",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "devDependencies": {
-    "@types/node": "^22.20.4"
+    "@types/node": "^26.6.2"
   }
 }
