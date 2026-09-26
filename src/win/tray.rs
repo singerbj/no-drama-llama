@@ -60,32 +60,19 @@ fn edit(f: impl Fn(&mut Settings) + Send + Sync + 'static) -> Act {
 
 pub(crate) const ICON_SIZE: usize = 32;
 
-/// The favicon's llama without its dot, 32x32 RGBA (rendered by scripts/tray-icon.ts).
-const LLAMA: &[u8; ICON_SIZE * ICON_SIZE * 4] = include_bytes!("../../icons/tray-llama.rgba");
+/// The logo (icons/logo.svg) at 32x32, rendered by scripts/icons.ts: everything but the
+/// circle as RGBA, and the circle's coverage, which is filled with the status color.
+const LOGO: &[u8; ICON_SIZE * ICON_SIZE * 4] = include_bytes!("../../icons/tray-logo.rgba");
+const DISC: &[u8; ICON_SIZE * ICON_SIZE] = include_bytes!("../../icons/tray-disc.a");
 
-/// Where the status dot sits: the favicon's dot (center 49,50, radius 9, 2.5 outline on a 64
-/// grid) at half scale.
-pub(crate) const DOT_CENTER: (f32, f32) = (24.5, 25.0);
-const DOT_RADIUS: f32 = 4.5;
-const DOT_OUTLINE: f32 = 1.25;
-const OUTLINE_RGB: (u8, u8, u8) = (0x2b, 0x21, 0x18);
-
-/// 32x32 tray icon (RGBA): the llama with an anti-aliased dot in the status color.
-pub(crate) fn dot_rgba(t: Tone) -> Vec<u8> {
-    const N: usize = ICON_SIZE;
-    let mut rgba = LLAMA.to_vec();
-    let (cx, cy) = DOT_CENTER;
-    for y in 0..N {
-        for x in 0..N {
-            let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
-            let px = &mut rgba[(y * N + x) * 4..][..4];
-            for (rgb, radius) in [
-                (OUTLINE_RGB, DOT_RADIUS + DOT_OUTLINE / 2.0),
-                (osd::tone_rgb(t), DOT_RADIUS - DOT_OUTLINE / 2.0),
-            ] {
-                over(px, rgb, (radius + 0.5 - d).clamp(0.0, 1.0));
-            }
-        }
+/// 32x32 tray icon (RGBA): the logo with its circle in the status color.
+pub(crate) fn icon_rgba(t: Tone) -> Vec<u8> {
+    let (r, g, b) = osd::tone_rgb(t);
+    let mut rgba = Vec::with_capacity(LOGO.len());
+    for (&disc, logo) in DISC.iter().zip(LOGO.as_chunks::<4>().0) {
+        let mut px = [r, g, b, disc];
+        over(&mut px, (logo[0], logo[1], logo[2]), logo[3] as f32 / 255.0);
+        rgba.extend_from_slice(&px);
     }
     rgba
 }
@@ -103,8 +90,8 @@ fn over(px: &mut [u8], (r, g, b): (u8, u8, u8), a: f32) {
     px[3] = (oa * 255.0).round() as u8;
 }
 
-fn dot_icon(t: Tone) -> Icon {
-    Icon::from_rgba(dot_rgba(t), ICON_SIZE as u32, ICON_SIZE as u32).expect("valid icon")
+fn status_icon(t: Tone) -> Icon {
+    Icon::from_rgba(icon_rgba(t), ICON_SIZE as u32, ICON_SIZE as u32).expect("valid icon")
 }
 
 struct Ui {
@@ -206,7 +193,7 @@ fn build() -> Ui {
             Tone::Error,
         ]
         .into_iter()
-        .map(|t| (t, dot_icon(t)))
+        .map(|t| (t, status_icon(t)))
         .collect(),
         tone: None,
         settings_window: Host::default(),

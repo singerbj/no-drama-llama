@@ -75,8 +75,9 @@ automatically.
   project now lives at the repository root.
 
 ### Changed
-- The tray icon is the llama from the site's favicon, with a plain dot in the status color
-  instead of a bare dot. `scripts/tray-icon.ts` renders it from `site/public/favicon.svg`.
+- New logo: a llama in sunglasses on a green circle (`icons/logo.svg`). It's the site's logo
+  and favicon and the app icon, and the tray icon is the logo with the circle in the status
+  color instead of a bare dot. `scripts/icons.ts` builds every icon from it.
 - The menu stays responsive: detection, health checks and server control run on a worker
   thread.
 - Settings keys are matched case-insensitively, as PowerShell did.
