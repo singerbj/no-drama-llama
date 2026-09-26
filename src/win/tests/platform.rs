@@ -205,13 +205,14 @@ fn colors_and_icons() {
     let colors: std::collections::HashSet<_> = tones.iter().map(|t| osd::tone_rgb(*t)).collect();
     assert_eq!(colors.len(), tones.len(), "every status has its own color");
     for t in tones {
-        let px = tray::dot_rgba(t);
+        let px = tray::icon_rgba(t);
         let n = tray::ICON_SIZE;
         assert_eq!(px.len(), n * n * 4);
         assert_eq!(px[3], 0, "corner is transparent");
-        let c = ((n / 2) * n + n / 2) * 4;
+        let at = |x: usize, y: usize| &px[(y * n + x) * 4..][..4];
+        assert_eq!(at(16, 8), [255, 255, 255, 255], "the llama's head");
         let (r, g, b) = osd::tone_rgb(t);
-        assert_eq!(&px[c..c + 4], &[r, g, b, 255], "center is the status color");
+        assert_eq!(at(17, 3), [r, g, b, 255], "the circle is the status color");
     }
 }
 

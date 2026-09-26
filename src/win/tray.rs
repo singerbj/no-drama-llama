@@ -60,27 +60,39 @@ fn edit(f: impl Fn(&mut Settings) + Send + Sync + 'static) -> Act {
 
 pub(crate) const ICON_SIZE: usize = 32;
 
-/// 32x32 anti-aliased status dot (RGBA).
-pub(crate) fn dot_rgba(t: Tone) -> Vec<u8> {
+/// The logo (icons/logo.svg) at 32x32, rendered by scripts/icons.ts: everything but its
+/// `.status` parts (the circle and inner ears) as RGBA, and their coverage, which is filled
+/// with the status color.
+const LOGO: &[u8; ICON_SIZE * ICON_SIZE * 4] = include_bytes!("../../icons/tray-logo.rgba");
+const DISC: &[u8; ICON_SIZE * ICON_SIZE] = include_bytes!("../../icons/tray-disc.a");
+
+/// 32x32 tray icon (RGBA): the logo with its circle in the status color.
+pub(crate) fn icon_rgba(t: Tone) -> Vec<u8> {
     let (r, g, b) = osd::tone_rgb(t);
-    const N: usize = ICON_SIZE;
-    let mut rgba = vec![0u8; N * N * 4];
-    let (c, radius) = (N as f32 / 2.0, 12.5f32);
-    for y in 0..N {
-        for x in 0..N {
-            let d = ((x as f32 + 0.5 - c).powi(2) + (y as f32 + 0.5 - c).powi(2)).sqrt();
-            let cover = (radius + 0.5 - d).clamp(0.0, 1.0);
-            let edge = (d - (radius - 2.0)).clamp(0.0, 1.0) * 0.55; // dark outline
-            let px = &mut rgba[(y * N + x) * 4..][..4];
-            let mix = |v: u8| (v as f32 * (1.0 - edge)) as u8;
-            px.copy_from_slice(&[mix(r), mix(g), mix(b), (cover * 255.0) as u8]);
-        }
+    let mut rgba = Vec::with_capacity(LOGO.len());
+    for (&disc, logo) in DISC.iter().zip(LOGO.as_chunks::<4>().0) {
+        let mut px = [r, g, b, disc];
+        over(&mut px, (logo[0], logo[1], logo[2]), logo[3] as f32 / 255.0);
+        rgba.extend_from_slice(&px);
     }
     rgba
 }
 
-fn dot_icon(t: Tone) -> Icon {
-    Icon::from_rgba(dot_rgba(t), ICON_SIZE as u32, ICON_SIZE as u32).expect("valid icon")
+/// Paints `rgb` at coverage `a` over a straight-alpha RGBA pixel.
+fn over(px: &mut [u8], (r, g, b): (u8, u8, u8), a: f32) {
+    let da = px[3] as f32 / 255.0;
+    let oa = a + da * (1.0 - a);
+    if oa == 0.0 {
+        return;
+    }
+    for (c, s) in px[..3].iter_mut().zip([r, g, b]) {
+        *c = ((s as f32 * a + *c as f32 * da * (1.0 - a)) / oa).round() as u8;
+    }
+    px[3] = (oa * 255.0).round() as u8;
+}
+
+fn status_icon(t: Tone) -> Icon {
+    Icon::from_rgba(icon_rgba(t), ICON_SIZE as u32, ICON_SIZE as u32).expect("valid icon")
 }
 
 struct Ui {
@@ -182,7 +194,7 @@ fn build() -> Ui {
             Tone::Error,
         ]
         .into_iter()
-        .map(|t| (t, dot_icon(t)))
+        .map(|t| (t, status_icon(t)))
         .collect(),
         tone: None,
         settings_window: Host::default(),
