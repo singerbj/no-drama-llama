@@ -3,10 +3,16 @@
 [![CI](https://github.com/singerbj/no-drama-llama/actions/workflows/ci.yml/badge.svg)](https://github.com/singerbj/no-drama-llama/actions/workflows/ci.yml)
 
 Turns a Windows gaming PC into an always-on local LLM server that **gets out of the way when
-you play**. It runs [llama.cpp](https://github.com/ggml-org/llama.cpp) with
-[Qwen 3.8 27B](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) on your GPU. When a game starts,
-it stops the model so the game gets all of your VRAM, and it brings the model back once you
-quit.
+you play**. It runs [llama.cpp](https://github.com/ggml-org/llama.cpp) with a
+[Qwen 3.8](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) model sized for your GPU. When a game
+starts, it stops the model so the game gets all of your VRAM, and it brings the model back once
+you quit.
+
+- **Works with any GPU llama.cpp supports** (AMD, NVIDIA, Intel). It installs the fastest
+  llama.cpp build for your card, picks a model that fits, and lets llama.cpp size the context
+  and GPU layers to your free VRAM.
+- **Choose any model** from the tray (*Settings → Model → Download a model*). Each one is marked
+  with how well it fits your PC, and you can also drop in your own `.gguf`.
 
 - **Tray icon** with status (🟢 running · 🟠 loading · 🔵 paused for a game · ⚪ off · 🔴 error)
   and every setting in its right-click menu
@@ -25,18 +31,23 @@ quit.
 ## Requirements
 
 - Windows 10 or 11 (x64), signed in with an **administrator** account
-- A GPU with Vulkan support. The default model (17.6 GB) plus a 32K context fits a **24 GB** card,
-  for example a Radeon RX 7900 XTX or GeForce RTX 3090/4090. For 16 GB cards, see [Models](#models).
-- About 25 GB of free space on `C:`
+- Any GPU with a Vulkan or CUDA driver. More VRAM means a better model, but everything from
+  8 GB cards up works (see [Models](#models)). Without a GPU it still runs on the CPU, slowly.
+- Free space on `C:` for the model: 8 – 30 GB for Qwen 3.8 27B, 75 – 115 GB for Flash-Next.
 
 ## Install
 
 1. Download `no-drama-llama.exe` from the [latest release](https://github.com/singerbj/no-drama-llama/releases/latest).
 2. Run it and choose **Yes** to install, then approve the administrator prompt.
 
-A console window shows progress. The model download is about 17.6 GB. If it's interrupted, run
-the exe again and it resumes. Every download is checked against its published SHA-256. When the
-install finishes, the tray icon appears and the model starts loading.
+A console window shows progress. The installer:
+1. detects your GPU and installs the matching llama.cpp build: CUDA on NVIDIA, Vulkan on AMD and
+   Intel
+2. measures the GPU's memory and downloads the best model for it
+
+If a download is interrupted, run the exe again and it resumes. Every download is checked
+against its published SHA-256. When the install finishes, the tray icon appears and the model
+starts loading.
 
 The app installs to `C:\Program Files\No Drama Llama`, starts with Windows, and appears in
 **Settings → Apps**. Upgrading from the PowerShell edition is automatic: your settings and
@@ -45,7 +56,10 @@ models are kept, and the old scripts, task and shortcuts are removed.
 Installer options (from a terminal):
 
 ```powershell
-.\no-drama-llama.exe install --skip-model            # bring your own .gguf
+.\no-drama-llama.exe models                          # what fits this PC
+.\no-drama-llama.exe install --model qwen3.8-27b:UD-Q5_K_XL
+.\no-drama-llama.exe install --model none            # bring your own .gguf
+.\no-drama-llama.exe install --backend vulkan        # force a llama.cpp build (vulkan, cuda12, cuda13)
 .\no-drama-llama.exe install --skip-power-settings --skip-wake-on-lan
 .\no-drama-llama.exe install --llama-cpp-tag b6500   # pin a llama.cpp build
 .\no-drama-llama.exe install --update-llama-cpp      # re-download llama.cpp
@@ -68,7 +82,10 @@ curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/jso
 
 ### Tray menu
 
-- **Settings → Model / Reasoning / Context length / Access**: switching restarts the server.
+- **Settings → Model**: switch between your models, or *Download a model* (see [Models](#models)).
+- **Settings → Reasoning / Context length / Access**: switching restarts the server. *Context
+  length → Auto* (the default) lets llama.cpp use the largest context that fits your GPU. The
+  status line shows what it chose, for example *Running - Qwen3.8 27B Q4_K_XL · 96K context*.
   *Access → Devices on my network* listens on `0.0.0.0`, so other devices on your network can use
   it. Set an `ApiKey` first (see below).
 - **Settings → Game detection**: turn pausing on or off, pick the detection method, tune the GPU
@@ -89,7 +106,7 @@ hand, and changes apply within a few seconds. Invalid values are ignored and log
 | --- | --- | --- |
 | `Model` | `Qwen3.8-27B-UD-Q4_K_XL.gguf` | File name in `C:\LLM\models` |
 | `Reasoning` | `low` | `none` · `low` · `medium` · `xhigh` |
-| `Context` | `32768` | Tokens (512 – 1048576). More context uses more VRAM. |
+| `Context` | `auto` | `auto` = the largest that fits your GPU, or a number of tokens (512 – 1048576) |
 | `ListenHost` | `127.0.0.1` | `0.0.0.0` makes it reachable from your network |
 | `Port` | `8080` | 1024 – 65535 |
 | `ApiKey` | *(empty)* | If set, clients must send `Authorization: Bearer <key>` |
@@ -104,12 +121,29 @@ hand, and changes apply within a few seconds. Invalid values are ignored and log
 
 ### Models
 
-Any GGUF file in `C:\LLM\models` shows up under *Settings → Model*. For a 16 GB card:
+The tray's *Settings → Model → Download a model* and `no-drama-llama.exe models` list:
 
-```powershell
-curl.exe -L -o C:\LLM\models\Qwen3.8-27B-UD-IQ3_XXS.gguf `
-  https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ3_XXS.gguf
-```
+| Model | Sizes | Best for |
+| --- | --- | --- |
+| **Qwen 3.8 27B** (dense) | Q8_0 29 GB → UD-IQ2_XXS 7.3 GB | Anything that fits entirely on the GPU: fast |
+| **Qwen 3.8 Flash-Next** (125B MoE, 6B active) | 72 – 111 GB | PCs with lots of RAM (96 GB+). Most of it lives in RAM and it stays fast, because only 6B parameters run per token. |
+
+Each model is marked *fits your GPU*, *GPU + RAM*, *partly in RAM - slow* or *too big for this
+PC*, and the best one for your PC gets a ★. For example:
+
+| GPU memory | Recommended |
+| --- | --- |
+| 48 GB | 27B Q8_0 |
+| 32 GB (RTX 5090) | 27B UD-Q6_K_XL |
+| 24 GB (RX 7900 XTX, RTX 4090) | 27B UD-Q4_K_XL |
+| 20 GB (RX 7900 XT) | 27B UD-IQ4_XS |
+| 16 GB (RTX 4080, RX 7800 XT) | 27B UD-IQ3_XXS |
+| 8 – 12 GB | 27B UD-IQ2_XXS, or Flash-Next if you have 96 GB+ of RAM |
+
+Downloads run in the background (progress shows in the menu, and you can click to cancel) and
+switch over when they finish. Any other GGUF you put in `C:\LLM\models` also shows up. Qwen's
+sampling and reasoning settings are only applied to Qwen models; other models use their own
+defaults.
 
 ## Optional: survive power cuts and restarts
 

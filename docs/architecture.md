@@ -13,6 +13,8 @@ at the end of this page.
 | `detect.rs` | any | Game matching: launcher folders, name lists, Windows' game list, Steam's running app, GPU-use decision |
 | `state.rs` | any | The state machine (below) |
 | `update.rs` | any | Update rules: version comparison, asset selection, digest check, minisign verification |
+| `hardware.rs` | any | `--list-devices` / `nvidia-smi` parsing, backend choice, llama.cpp asset selection, context from the log |
+| `catalog.rs` | any | Downloadable models, how well each fits this PC, the recommendation |
 | `setup.rs` | any | Install/uninstall logic: task XML, settings backup and restore, `powercfg` parsing, PowerShell-edition migration |
 | `cli.rs` | any | Command-line parsing |
 | `win/tray.rs` | Windows | UI thread: tray icon and menu, Ctrl+Alt+L hotkey, popups |
@@ -22,6 +24,8 @@ at the end of this page.
 | `win/libraries.rs` | Windows | Reads each launcher's records to find game folders |
 | `win/procs.rs` | Windows | Process list and exe paths (sysinfo) |
 | `win/install.rs` | Windows | `install` / `uninstall` subcommands |
+| `win/probe.rs` | Windows | Runs `nvidia-smi`, `llama-server --list-devices` / `--help` (with timeouts); reads RAM |
+| `win/models.rs` | Windows | Hugging Face model downloads: resumable, verified, cancellable, multi-part |
 | `win/updater.rs`, `win/net.rs` | Windows | GitHub Releases, verified resumable downloads, `/health` checks |
 
 Everything that makes a decision is platform-independent and unit-tested on Linux and Windows.
@@ -57,6 +61,34 @@ Precedence is **Off > Paused > Loading/Running**. The app stays silent while it 
 startup, so no popup appears over a game at boot. Property tests check the safety rules across
 thousands of random event sequences: never run while off or while a game is held, never start
 twice, and report Running only when `/health` says ready.
+
+## Fitting any GPU
+
+- **Backend:** `hardware::choose_backend` reads `nvidia-smi`:
+  - NVIDIA with driver 580+ and compute capability 7.5+ → CUDA 13
+  - NVIDIA with driver 528+ and compute capability 6.0+ → CUDA 12
+  - anything else (AMD, Intel, old NVIDIA) → Vulkan
+
+  The installer downloads that llama.cpp build, plus the CUDA runtime zip for CUDA. If a
+  release lacks the build, it falls back to CUDA 12 and then Vulkan. It records the result in
+  `llama\backend.txt` and reinstalls if the GPU changes.
+- **Sizing:** llama.cpp's `--fit` (on by default, detected from `llama-server --help`) sets
+  everything we leave unset to fit the free device memory:
+  - GPU layers
+  - context, when *Context* is `auto`
+  - CPU offload of MoE experts
+
+  So the app passes no `-ngl`, and no `-c` in auto mode. Builds without `--fit` get the old
+  `-ngl 99 -c 32768`. The context llama.cpp chose is read back from `server.log`.
+- **Model choice:** `catalog::recommend` uses the primary GPU's memory as llama.cpp reports it
+  (`--list-devices`, which skips integrated GPUs) and system RAM:
+  1. The best Qwen 3.8 27B quant (IQ3_XXS or better) that fits in VRAM with 5 GiB to spare
+     for context.
+  2. Otherwise Flash-Next (MoE) if it fits in VRAM plus RAM.
+  3. Otherwise the best 27B quant that fits in VRAM at all.
+  4. Otherwise the smallest 27B quant that fits in VRAM plus RAM.
+
+  Split GGUFs are downloaded part by part, verified, and listed once.
 
 ## Game detection
 

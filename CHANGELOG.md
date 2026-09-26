@@ -27,6 +27,19 @@ automatically.
   smoke test and a dependency advisory check. A tag-triggered release builds, signs and
   publishes. Dependabot keeps dependencies current.
 
+- **Any GPU:**
+  - llama.cpp's `--fit` sizes GPU layers, context (`Context: auto`, the new default) and MoE
+    offload to your VRAM.
+  - The installer picks CUDA 13 or CUDA 12 on NVIDIA and Vulkan on AMD and Intel.
+  - The status line shows the context llama.cpp chose.
+- **Model choice:**
+  - A catalog of Qwen 3.8 27B quants and Qwen 3.8 Flash-Next (125B MoE), each rated for your
+    PC, with a recommendation based on GPU memory and RAM.
+  - Download from the tray: in the background, resumable, verified and cancellable, and it
+    switches when done.
+  - Installer options `--model` and `--backend`, and a `models` command.
+  - Qwen sampling and reasoning settings only apply to Qwen models.
+
 ### Changed
 - The menu stays responsive: detection, health checks and server control run on a worker
   thread.
