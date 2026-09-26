@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format follows
 - `scripts/check.sh` runs every pull request check, and the pre-commit hook in `.githooks/` runs it
   before each commit (enabled by `npm ci` in `ui/`).
 
+### Fixed
+- Model and llama.cpp downloads no longer fail with "download interrupted" after two minutes. The
+  120 s limit was a total budget for the whole body; it now applies only when no data arrives for
+  120 s.
+
 ## [2.0.0]
 
 A single self-installing app, written in Rust, replaces the PowerShell scripts. It keeps the

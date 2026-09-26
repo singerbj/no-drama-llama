@@ -8,6 +8,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use ureq::tls::{TlsConfig, TlsProvider};
+use ureq::unversioned::resolver::DefaultResolver;
+use ureq::unversioned::transport::{
+    Buffers, ConnectionDetails, Connector, DefaultConnector, NextTimeout, Transport,
+};
 
 fn agent_with(global: Option<Duration>) -> ureq::Agent {
     let cfg = ureq::Agent::config_builder()
@@ -66,14 +70,29 @@ pub fn download(url: &str, dest: &Path, progress: impl FnMut(u64, u64)) -> Resul
 
 pub const CANCELLED: &str = "download cancelled";
 
+/// A download is abandoned (keeping the partial file) when no bytes arrive for this long.
+const STALL: Duration = Duration::from_secs(120);
+
 /// Like [`download`], stopping (and keeping the partial file for resuming) when `cancel` is set.
 pub fn download_cancellable(
     url: &str,
     dest: &Path,
-    mut progress: impl FnMut(u64, u64),
+    progress: impl FnMut(u64, u64),
     cancel: Option<&AtomicBool>,
 ) -> Result<()> {
-    // No global timeout: a 17 GB model takes a while. Stalls are caught by the body timeout.
+    download_with_stall(url, dest, progress, cancel, STALL)
+}
+
+/// [`download_cancellable`] with the stall threshold as a parameter, for tests.
+pub(crate) fn download_with_stall(
+    url: &str,
+    dest: &Path,
+    mut progress: impl FnMut(u64, u64),
+    cancel: Option<&AtomicBool>,
+    stall: Duration,
+) -> Result<()> {
+    // No global or body timeout: ureq's are total budgets and a 17 GB model takes a while.
+    // Stalls are caught per socket read by `StallGuard` instead.
     let cfg = ureq::Agent::config_builder()
         .tls_config(
             TlsConfig::builder()
@@ -81,11 +100,14 @@ pub fn download_cancellable(
                 .build(),
         )
         .timeout_connect(Some(Duration::from_secs(30)))
-        .timeout_recv_body(Some(Duration::from_secs(120)))
         .http_status_as_error(false)
         .user_agent(format!("no-drama-llama/{}", env!("CARGO_PKG_VERSION")))
         .build();
-    let agent = ureq::Agent::new_with_config(cfg);
+    let agent = ureq::Agent::with_parts(
+        cfg,
+        DefaultConnector::new().chain(StallGuard(stall)),
+        DefaultResolver::default(),
+    );
     let have = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
     let mut req = agent.get(url);
     if have > 0 {
@@ -138,6 +160,65 @@ pub fn download_cancellable(
         bail!("download incomplete ({done} of {total} bytes) - run it again to resume");
     }
     Ok(())
+}
+
+/// Wraps the outermost transport (TLS or plain TCP) so every read waits at most the given
+/// duration. ureq has no per-read timeout of its own, only total budgets.
+#[derive(Debug)]
+struct StallGuard(Duration);
+
+impl Connector<Box<dyn Transport>> for StallGuard {
+    type Out = Stalling;
+
+    fn connect(
+        &self,
+        _: &ConnectionDetails,
+        chained: Option<Box<dyn Transport>>,
+    ) -> Result<Option<Stalling>, ureq::Error> {
+        Ok(chained.map(|inner| Stalling {
+            inner,
+            stall: self.0,
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct Stalling {
+    inner: Box<dyn Transport>,
+    stall: Duration,
+}
+
+impl Transport for Stalling {
+    fn buffers(&mut self) -> &mut dyn Buffers {
+        self.inner.buffers()
+    }
+
+    fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
+        self.inner.transmit_output(amount, timeout)
+    }
+
+    fn await_input(&mut self, mut timeout: NextTimeout) -> Result<bool, ureq::Error> {
+        let stall = self.stall.into();
+        if timeout.after <= stall {
+            return self.inner.await_input(timeout);
+        }
+        timeout.after = stall;
+        self.inner.await_input(timeout).map_err(|e| match e {
+            ureq::Error::Timeout(_) => ureq::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("no data received for {} s", self.stall.as_secs_f32()),
+            )),
+            e => e,
+        })
+    }
+
+    fn is_open(&mut self) -> bool {
+        self.inner.is_open()
+    }
+
+    fn is_tls(&self) -> bool {
+        self.inner.is_tls()
+    }
 }
 
 pub fn file_sha256(path: &Path) -> Result<String> {
