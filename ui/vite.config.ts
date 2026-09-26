@@ -7,7 +7,8 @@ export default defineConfig({
   plugins: [react()],
   base: "./",
   clearScreen: false,
-  server: { port: 5173, strictPort: true },
+  // The design system (tokens and fonts) lives in ../design, outside this package.
+  server: { port: 5173, strictPort: true, fs: { allow: [".", "../design"] } },
   build: {
     outDir: "dist",
     emptyOutDir: true,

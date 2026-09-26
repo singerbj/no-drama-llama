@@ -1,0 +1,17 @@
+/* Type: Google Sans Code carries everything (UI, body, code). Unbounded is display-only. */
+:root{
+--font-display:'Unbounded',ui-rounded,system-ui,sans-serif;
+--font-sans:'Google Sans Code',ui-monospace,'Cascadia Mono',Consolas,monospace;
+--font-mono:'Google Sans Code',ui-monospace,'Cascadia Mono',Consolas,monospace;
+/* app scale (settings window, source: ui/src/style.css) */
+--text-2xs:11px;--text-xs:12px;--text-hint:12.5px;--text-code:13px;--text-app:14px;--text-status:15px;--text-app-h2:18px;
+/* site scale (source: site/src/styles/landing.css) */
+--text-sm:0.9rem;--text-body:17px;--text-lede:1.2rem;--text-h3:1.1rem;
+--text-h2:clamp(1.75rem,1.2rem + 2vw,2.5rem); /* @kind other */
+--text-h1:clamp(2.25rem,1.4rem + 3.6vw,3.75rem); /* @kind other */
+--text-cta:clamp(2rem,1.3rem + 2.5vw,3rem); /* @kind other */
+
+--leading-tight:1.15;--leading-snug:1.3;--leading-app:1.45;--leading-body:1.6;
+--tracking-display:-0.02em;--tracking-h1:-0.035em;--tracking-caps:0.08em;--tracking-th:0.06em;
+--weight-regular:400;--weight-medium:500;--weight-semibold:600;--weight-bold:700;--weight-display:700;
+}

@@ -2,7 +2,7 @@
 # Runs the same checks as the pull request CI (.github/workflows/ci.yml and site.yml).
 # The pre-commit hook (.githooks/pre-commit) runs it; you can also run it by hand.
 #
-#   scripts/check.sh              everything; the docs site only if site/, docs/ or CHANGELOG.md changed
+#   scripts/check.sh              everything; the docs site only if site/, design/, docs/ or CHANGELOG.md changed
 #   scripts/check.sh --all        also build the docs site regardless
 #   scripts/check.sh --staged     (the hook) decide about the docs site from the staged files
 #
@@ -73,7 +73,7 @@ fi
 
 # ---------------------------------------------------------------- docs site (site/)
 
-site_paths='^(site/|docs/|CHANGELOG\.md$|\.github/workflows/site\.yml$)'
+site_paths='^(site/|design/|docs/|CHANGELOG\.md$|\.github/workflows/site\.yml$)'
 case "$mode" in
   --all) build_site=1 ;;
   --staged) git diff --cached --name-only | grep -Eq "$site_paths" && build_site=1 || build_site=0 ;;

@@ -217,6 +217,25 @@ fn colors_and_icons() {
 }
 
 #[test]
+fn popup_uses_the_design_systems_font() {
+    use windows::Win32::Graphics::Gdi::{DeleteObject, HGDIOBJ};
+    let face = |weight: i32, text: &str| {
+        let f = osd::font(18, weight, &text.encode_utf16().collect::<Vec<_>>());
+        let name = osd::face_name(f);
+        let _ = unsafe { DeleteObject(HGDIOBJ(f.0)) };
+        name
+    };
+    assert_eq!(face(600, "LLM paused"), "Google Sans Code SemiBold");
+    assert_eq!(
+        face(400, "Example Game (Steam) detected · GPU freed"),
+        "Google Sans Code"
+    );
+    assert_eq!(face(400, ""), "Google Sans Code");
+    // Characters it has no glyph for (here Japanese) fall back to Segoe UI and its font links.
+    assert_eq!(face(600, "原神 detected"), "Segoe UI");
+}
+
+#[test]
 fn popup_window_can_be_shown_and_replaced() {
     for pos in crate::settings::PopupPosition::ALL.map(|(p, _)| p) {
         osd::show(

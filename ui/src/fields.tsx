@@ -281,7 +281,7 @@ export function ModelPicker({ k }: { k: "Model" }) {
             onChange={() => form.edit(k, m.name)}
           />
           <span>{m.name}</span>
-          <small>{m.size < 0 ? "missing" : gb(m.size)}</small>
+          {m.size < 0 ? <small className="missing">missing</small> : <small>{gb(m.size)}</small>}
         </label>
       ))}
     </div>

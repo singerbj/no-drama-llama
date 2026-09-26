@@ -1,0 +1,40 @@
+/* No Drama Llama — color tokens.
+   Neutrals are warm "llama wool" (from site/src/styles/theme.css), deepened for a night-first UI.
+   Status tones are the five tray tones (osd::tone_rgb) + the site's "game" tone, pushed brighter
+   into a fun, candy-bright set that stays distinct from each other on dark and light grounds. */
+:root{
+/* wool neutrals */
+--wool-0:#FFFDFA;--wool-50:#FBF7F2;--wool-100:#F7F2EC;--wool-200:#EEE6DC;--wool-300:#C9BDB0;--wool-400:#9A8B7C;--wool-500:#635649;--wool-600:#3F352C;--wool-700:#2A231D;--wool-800:#221D18;--wool-850:#1A1612;--wool-900:#13100D;--wool-950:#0C0A08;
+/* status: bright (dark-ground) / deep (light-ground) */
+--mint-300:#9DF5C0;--mint-400:#3DDC84;--mint-500:#1FB866;--mint-600:#128A4A;--mint-900:#0B2A1A;
+--marigold-300:#FFD98A;--marigold-400:#FFB627;--marigold-500:#E89A00;--marigold-600:#A86B00;--marigold-900:#2E2106;
+--sky-300:#AFD6FF;--sky-400:#5AB0FF;--sky-500:#2F8CF0;--sky-600:#1A63B8;--sky-900:#0D2238;
+--pebble-300:#CFC6BD;--pebble-400:#A89C90;--pebble-500:#857A70;--pebble-600:#5E554D;
+--tomato-300:#FFB0A8;--tomato-400:#FF5A4E;--tomato-500:#E63B2F;--tomato-600:#B0271E;--tomato-900:#35110D;
+--grape-300:#CDC4FF;--grape-400:#9D8CFF;--grape-500:#7B67F5;--grape-600:#5A45D1;--grape-900:#1F1840;
+/* brand: the llama logo's disc + shades */
+--llama-disc:var(--mint-400);--llama-shades:#17383D;--llama-white:#FFFFFF;
+
+/* ---------- semantic (dark, the default) ---------- */
+--bg:var(--wool-900);--bg-alt:var(--wool-850);--surface:var(--wool-800);--surface-raised:var(--wool-700);--field:var(--wool-950);--hover:#2F2822;
+--border:#3A3129;--border-strong:var(--wool-500);
+--text:var(--wool-50);--text-muted:var(--wool-300);--text-faint:var(--wool-400);
+--accent:var(--mint-400);--accent-strong:var(--mint-300);--accent-soft:var(--mint-900);--on-accent:#06160D;
+--danger:var(--tomato-400);--on-danger:#1A0604;
+--code-bg:var(--wool-950);--code-text:var(--wool-200);--code-muted:var(--wool-400);
+--osd-bg:rgb(28 28 32);--osd-border:rgb(70 70 76);--osd-sub:rgb(190 190 198);
+--tone-running:var(--mint-400);--tone-loading:var(--marigold-400);--tone-paused:var(--sky-400);--tone-off:var(--pebble-400);--tone-error:var(--tomato-400);--tone-game:var(--grape-400);
+--tone-running-soft:color-mix(in srgb,var(--tone-running) 14%,var(--surface));--tone-loading-soft:color-mix(in srgb,var(--tone-loading) 14%,var(--surface));--tone-paused-soft:color-mix(in srgb,var(--tone-paused) 14%,var(--surface));--tone-off-soft:color-mix(in srgb,var(--tone-off) 14%,var(--surface));--tone-error-soft:color-mix(in srgb,var(--tone-error) 14%,var(--surface));--tone-game-soft:color-mix(in srgb,var(--tone-game) 14%,var(--surface));
+--on-tone:#0C0A08;
+color-scheme:dark;
+}
+[data-theme="light"]{
+--bg:var(--wool-0);--bg-alt:var(--wool-100);--surface:#FFFFFF;--surface-raised:var(--wool-50);--field:#FFFFFF;--hover:var(--wool-100);
+--border:#E6DCCF;--border-strong:var(--wool-300);
+--text:var(--wool-850);--text-muted:var(--wool-500);--text-faint:#7D6F62;
+--accent:var(--mint-600);--accent-strong:#0C6B38;--accent-soft:#D4F5E1;--on-accent:#FFFFFF;
+--danger:var(--tomato-600);--on-danger:#FFFFFF;
+--code-bg:#1F1A15;--code-text:#EEE6DC;--code-muted:#9A8B7C;
+--tone-running:var(--mint-500);--tone-loading:var(--marigold-500);--tone-paused:var(--sky-500);--tone-off:var(--pebble-500);--tone-error:var(--tomato-500);--tone-game:var(--grape-500);
+color-scheme:light;
+}
