@@ -52,6 +52,11 @@ All notable changes to this project are documented here. The format follows
   120 s.
 
 ### Security
+- **Release exes can be code-signed through [SignPath Foundation](https://signpath.org/).**
+  Once it's set up (see [docs/releasing.md](docs/releasing.md)), the release workflow has
+  SignPath Authenticode-sign the exe and checks that the signed file is the CI build plus a
+  valid, timestamped signature. The minisign signature for the updater then covers the signed
+  file. Until then, releases stay unsigned as before.
 - **Self-update no longer runs a copy of the app from `%TEMP%`.** The update used to move the
   old exe to the user's temp folder and start an elevated helper copy there, where unelevated
   programs could plant DLLs or a fake `cmd.exe` and have them run as administrator. The swap
