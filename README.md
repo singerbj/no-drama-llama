@@ -259,3 +259,7 @@ The test suite includes:
 
 CI runs all of it on Linux and Windows. Releases are cut by pushing a `v*` tag, as described in
 [docs/releasing.md](docs/releasing.md).
+
+## License
+
+[MIT](LICENSE)
