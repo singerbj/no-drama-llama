@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 import { connect, type Api } from "./api";
-import { FormProvider, RESTARTS_SERVER, useSettingsForm } from "./form";
-import { AppPanel, GamesPanel, ModelPanel, Overview, ServerPanel } from "./panels";
+import { FormProvider, RESTARTS_LAYA, RESTARTS_SERVER, useSettingsForm } from "./form";
+import { AppPanel, GamesPanel, LayaPanel, ModelPanel, Overview, ServerPanel } from "./panels";
 import type { Request, View } from "./types";
 
 const TABS: [id: string, title: string, Panel: ComponentType][] = [
   ["overview", "Overview", Overview],
   ["model", "Model", ModelPanel],
   ["server", "Server & API", ServerPanel],
+  ["laya", "Laya", LayaPanel],
   ["games", "Game detection", GamesPanel],
   ["app", "App", AppPanel],
 ];
@@ -105,7 +106,10 @@ export function App() {
   }
 
   const dirty = changed.length > 0 || invalid.size > 0;
-  const restarts = changed.some((k) => RESTARTS_SERVER.includes(k));
+  const restarting = [
+    changed.some((k) => RESTARTS_SERVER.includes(k)) && "the model",
+    view.settings.RunLaya && changed.some((k) => RESTARTS_LAYA.includes(k)) && "Laya",
+  ].filter(Boolean);
 
   return (
     <FormProvider value={form}>
@@ -150,7 +154,7 @@ export function App() {
           <span>
             {invalid.size > 0
               ? `Fix the highlighted value${invalid.size > 1 ? "s" : ""} to save`
-              : `${changed.length} unsaved change${changed.length > 1 ? "s" : ""}${restarts ? " · saving restarts the model" : ""}`}
+              : `${changed.length} unsaved change${changed.length > 1 ? "s" : ""}${restarting.length ? ` · saving restarts ${restarting.join(" and ")}` : ""}`}
           </span>
           <button onClick={revert}>Revert</button>
           <button className="primary" disabled={invalid.size > 0 || changed.length === 0} onClick={save}>

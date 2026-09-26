@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Laya alongside the LLM** (optional, off by default). [Ollaya](https://ollaya.dev) serves
+  Laya, a decision model that answers choice, score and yes/no questions about a text in one
+  forward pass, on its own port (11435) with an Ollaya and TypeSafe-compatible API. The app
+  installs Ollaya from its GitHub releases (checked against `sha256sum.txt`, with the NVIDIA GPU
+  pack when the driver supports CUDA 13), downloads and preloads the model, shows progress, and
+  runs it with the LLM: the same on/off switch, access and API key, and a pause while gaming
+  unless it runs on the CPU. Updates follow *Update automatically*.
+  - New settings `RunLaya`, `LayaModel`, `LayaPort`, `LayaDevice` and `LayaKeepAlive`.
+  - A **Laya** tab in the settings window, a *Laya (decision model)* submenu in the tray, and
+    `install --laya`.
+  - `C:\LLM\data\laya.log` has Ollaya's output.
 - **Settings window** (*Open settings window...* in the tray menu). It has every setting, the
   model catalog with downloads, and on/off, restart, open chat and update controls. It's built
   with Tauri 2 (WebView2), React and TypeScript. It runs as a child process of the tray

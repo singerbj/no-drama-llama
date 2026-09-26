@@ -91,6 +91,7 @@ impl Harness {
 impl Drop for Harness {
     fn drop(&mut self) {
         self.w.stop_server("test done");
+        self.w.stop_laya("test done");
     }
 }
 
@@ -313,4 +314,166 @@ fn cancelled_download_reports_and_keeps_the_old_model() {
     assert_eq!(Settings::load(&h.p.settings).0.model, before);
     assert!(h.last.as_ref().unwrap().download.is_none());
     assert!(!h.p.model(&m.primary_file()).exists());
+}
+
+impl Harness {
+    /// Ticks (delivering the worker's own messages: finished jobs) until Laya's status matches.
+    fn until_laya(&mut self, what: &str, f: impl Fn(&crate::laya::Status) -> bool) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            while let Ok(c) = self.self_rx.try_recv() {
+                self.cmd(c);
+            }
+            self.tick();
+            let l = &self.last.as_ref().unwrap().laya;
+            if f(&l.status) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < end,
+                "timed out waiting for Laya {what}; last {:?}; popups {:?}",
+                l.status,
+                self.popups
+            );
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+
+    fn laya_pids(&self) -> Vec<u32> {
+        let mut p = super::super::procs::Procs::new();
+        p.refresh();
+        super::super::laya::pids(&p, &self.p)
+    }
+}
+
+#[test]
+fn laya_runs_alongside_the_llm() {
+    use crate::laya::{Device, Installed, Status as L};
+    let mut h = Harness::new(free_port());
+    // Ollaya already installed (the install itself is tested in tests/laya.rs)
+    copy_exe(&example_exe("fake_ollaya"), &h.p.ollaya_exe);
+    let record = Installed {
+        version: "0.5.0".into(),
+        gpu_pack: false,
+        gpu_wanted: false,
+    };
+    std::fs::write(h.p.ollaya_dir.join("install.json"), record.to_json()).unwrap();
+    h.w.laya_record = Some(record);
+    h.w.nvidia = Some(Vec::new()); // no GPU pack wanted, whatever this machine has
+    h.w.laya_release_api = "http://127.0.0.1:9/nothing".into();
+    h.until("running", |s| *s == Status::Running);
+    assert_eq!(h.last.as_ref().unwrap().laya.status, L::Disabled);
+    assert!(h.laya_pids().is_empty(), "off by default");
+
+    // 1. Turned on: started with our settings, the model pulled and loaded
+    let laya_port = free_port();
+    h.cmd(Cmd::Edit(Box::new(move |s| {
+        s.run_laya = true;
+        s.laya_port = laya_port;
+        s.laya_device = Device::Cpu;
+        s.api_key = "sekrit".into();
+    })));
+    h.until_laya("ready", |l| *l == L::Ready);
+    let env = std::fs::read_to_string(h.p.ollaya_exe.with_file_name("env.txt")).unwrap();
+    for want in [
+        format!("OLLAYA_HOST=127.0.0.1:{laya_port}"),
+        "OLLAYA_DEVICE=cpu".into(),
+        "OLLAYA_KEEP_ALIVE=-1".into(),
+        "OLLAYA_API_KEY=sekrit".into(),
+        format!("OLLAYA_MODELS={}", h.p.ollaya_models.display()),
+    ] {
+        assert!(env.lines().any(|l| l == want), "{want} in {env}");
+    }
+    let store = h.p.ollaya_models.clone();
+    assert_eq!(
+        std::fs::read_to_string(store.join("pulled.txt")).unwrap(),
+        "laya:latest\n"
+    );
+    let loaded = std::fs::read_to_string(store.join("loaded.txt")).unwrap();
+    assert!(loaded.contains(r#""keep_alive":"-1""#), "{loaded}");
+    assert!(
+        h.popups.contains(&"Laya ready".to_string()),
+        "{:?}",
+        h.popups
+    );
+    let snap = h.last.clone().unwrap();
+    assert_eq!(snap.status, Status::Running, "the LLM is unaffected");
+    assert_eq!(snap.laya.url, format!("http://127.0.0.1:{laya_port}"));
+    assert_eq!(snap.laya.version.as_deref(), Some("0.5.0"));
+    assert_eq!(h.laya_pids().len(), 1);
+
+    // 2. A game: the LLM pauses; Laya on the CPU keeps running
+    let game_exe = h.p.root.join("games").join("ndl-fake-game.exe");
+    copy_exe(&example_exe("fake_llama_server"), &game_exe);
+    let mut game = std::process::Command::new(&game_exe).spawn().unwrap();
+    h.until("paused", |s| matches!(s, Status::Paused(_)));
+    h.tick();
+    assert_eq!(h.last.as_ref().unwrap().laya.status, L::Ready);
+    assert_eq!(h.laya_pids().len(), 1);
+
+    // 3. On the GPU it pauses with the LLM, and comes back when the game closes
+    h.cmd(Cmd::Edit(Box::new(|s| s.laya_device = Device::Auto)));
+    h.until_laya("paused", |l| *l == L::Paused);
+    assert!(h.laya_pids().is_empty(), "GPU freed");
+    game.kill().unwrap();
+    let _ = game.wait();
+    h.until_laya("ready after the game", |l| *l == L::Ready);
+    assert_eq!(
+        std::fs::read_to_string(store.join("pulled.txt")).unwrap(),
+        "laya:latest\n",
+        "not downloaded again"
+    );
+
+    // 4. A new model is pulled; the old one stays
+    h.cmd(Cmd::Edit(Box::new(|s| s.laya_model = "laya:en".into())));
+    h.until_laya("ready with laya:en", |l| *l == L::Ready);
+    assert!(std::fs::read_to_string(store.join("pulled.txt"))
+        .unwrap()
+        .contains("laya:en\n"));
+
+    // 5. The off switch covers Laya too
+    h.cmd(Cmd::Toggle);
+    h.until_laya("off", |l| *l == L::Off);
+    assert!(h.laya_pids().is_empty());
+    h.cmd(Cmd::Toggle);
+    h.until_laya("on again", |l| *l == L::Ready);
+
+    // 6. A model the registry doesn't have: an error that says why, retried later
+    h.cmd(Cmd::Edit(Box::new(|s| s.laya_model = "missing".into())));
+    h.until_laya(
+        "pull error",
+        |l| matches!(l, L::Error(e) if e.contains("not found in registry")),
+    );
+    assert!(h.popups.contains(&"Laya error".to_string()));
+
+    // 7. Keeps crashing: an error; Restart Laya tries again
+    h.cmd(Cmd::Edit(Box::new(|s| s.laya_model = "laya".into())));
+    std::fs::write(h.p.ollaya_exe.with_file_name("crash"), b"").unwrap();
+    h.w.stop_laya("test");
+    h.until_laya(
+        "crash error",
+        |l| matches!(l, L::Error(e) if e.contains("keeps crashing")),
+    );
+    std::fs::remove_file(h.p.ollaya_exe.with_file_name("crash")).unwrap();
+    h.cmd(Cmd::RestartLaya);
+    h.until_laya("ready after restart", |l| *l == L::Ready);
+
+    // 8. The LLM's port: a settings problem, nothing started
+    let llm_port = h.last.as_ref().unwrap().settings.port;
+    h.cmd(Cmd::Edit(Box::new(move |s| s.laya_port = llm_port)));
+    h.until_laya(
+        "port clash",
+        |l| matches!(l, L::Error(e) if e.contains("LayaPort")),
+    );
+    assert!(h.laya_pids().is_empty());
+
+    // 9. Turned off in settings: stopped
+    h.cmd(Cmd::Edit(Box::new(move |s| {
+        s.laya_port = laya_port;
+        s.run_laya = false;
+    })));
+    h.until_laya("disabled", |l| *l == L::Disabled);
+    assert!(h.laya_pids().is_empty());
+    h.tick();
+    assert_eq!(h.last.as_ref().unwrap().status, Status::Running);
 }

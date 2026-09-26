@@ -7,6 +7,16 @@ import type { Request, SettingKey, Settings, View } from "./types";
 /** Settings that change llama-server's command line (see settings::server_changed). */
 export const RESTARTS_SERVER: SettingKey[] = ["Model", "Reasoning", "Context", "ListenHost", "Port", "ApiKey"];
 
+/** Settings that restart Laya's daemon (see laya::laya_changed). */
+export const RESTARTS_LAYA: SettingKey[] = [
+  "LayaModel",
+  "LayaPort",
+  "LayaDevice",
+  "LayaKeepAlive",
+  "ListenHost",
+  "ApiKey",
+];
+
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 export interface Form {

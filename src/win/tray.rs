@@ -8,6 +8,7 @@ use super::worker::{Cmd, Snapshot, UiMsg, UpdateState, Worker};
 use super::{osd, sys};
 use crate::catalog;
 use crate::control::Request;
+use crate::laya;
 use crate::log;
 use crate::paths::{self, Paths};
 use crate::settings::{DetectionMode, PopupPosition, Reasoning, Settings};
@@ -47,6 +48,9 @@ enum Act {
     Download(String),
     CancelDownload,
     OpenModels,
+    RestartLaya,
+    UpdateLaya,
+    ViewLayaLog,
     Exit,
 }
 
@@ -93,6 +97,10 @@ struct Ui {
     gpu_info: MenuItem,
     not_game: MenuItem,
     update: MenuItem,
+    laya_status: MenuItem,
+    laya_update: MenuItem,
+    laya_only: Vec<Submenu>,
+    laya_restart: MenuItem,
     gpu_only: Vec<Submenu>,
     checks: Vec<(CheckMenuItem, Pred)>,
     actions: HashMap<MenuId, Act>,
@@ -158,6 +166,10 @@ fn build() -> Ui {
         gpu_info: MenuItem::new("GPU: detecting...", false, None),
         not_game: MenuItem::new("Not a game - ignore this app", false, None),
         update: MenuItem::new("Check for updates", true, None),
+        laya_status: MenuItem::new("Laya: off", false, None),
+        laya_update: MenuItem::new("Check for Ollaya updates", true, None),
+        laya_only: Vec::new(),
+        laya_restart: MenuItem::new("Restart Laya", true, None),
         gpu_only: Vec::new(),
         checks: Vec::new(),
         actions: HashMap::new(),
@@ -235,6 +247,52 @@ fn build() -> Ui {
             move |n| n.settings.listen_host == host,
         );
     }
+    let lm = Submenu::new("Laya (decision model)", true);
+    settings.add(&lm);
+    lm.add(&ui.laya_status.clone());
+    sep(&lm);
+    ui.check(
+        &lm,
+        "Run Laya alongside the LLM",
+        edit(|s| s.run_laya = !s.run_laya),
+        |n| n.settings.run_laya,
+    );
+    let laya_model = Submenu::new("Model", true);
+    lm.add(&laya_model);
+    for (m, label) in laya::MODELS {
+        ui.check(
+            &laya_model,
+            label,
+            edit(move |s| s.laya_model = m.into()),
+            move |n| n.settings.laya_model == m,
+        );
+    }
+    let device = Submenu::new("Run on", true);
+    lm.add(&device);
+    for (d, label) in laya::Device::ALL {
+        ui.check(&device, label, edit(move |s| s.laya_device = d), move |n| {
+            n.settings.laya_device == d
+        });
+    }
+    let keep = Submenu::new("Keep the model loaded", true);
+    lm.add(&keep);
+    for (v, label) in laya::KEEP_ALIVE_PRESETS {
+        ui.check(
+            &keep,
+            label,
+            edit(move |s| s.laya_keep_alive = v.into()),
+            move |n| n.settings.laya_keep_alive == v,
+        );
+    }
+    ui.laya_only = vec![laya_model, device, keep];
+    sep(&lm);
+    ui.actions
+        .insert(ui.laya_restart.id().clone(), Act::RestartLaya);
+    lm.add(&ui.laya_restart.clone());
+    ui.actions
+        .insert(ui.laya_update.id().clone(), Act::UpdateLaya);
+    lm.add(&ui.laya_update.clone());
+    ui.item(&lm, "View Laya log", Act::ViewLayaLog);
     sep(&settings);
 
     let games = Submenu::new("Game detection", true);
@@ -371,7 +429,12 @@ impl Ui {
             .as_ref()
             .map(|d| format!(" · downloading {:.0}%", percent(d)))
             .unwrap_or_default();
-        let tip: String = format!("{}: {}{dl}", paths::APP_NAME, snap.status_text)
+        let laya_tip = if snap.settings.run_laya {
+            format!(" · Laya: {}", snap.laya.status_text)
+        } else {
+            String::new()
+        };
+        let tip: String = format!("{}: {}{dl}{laya_tip}", paths::APP_NAME, snap.status_text)
             .chars()
             .take(127)
             .collect();
@@ -408,6 +471,28 @@ impl Ui {
         for g in &self.gpu_only {
             g.set_enabled(snap.settings.detection_mode.uses_gpu());
         }
+        let l = &snap.laya;
+        let job = l
+            .job
+            .as_ref()
+            .filter(|d| d.total > 0)
+            .map(|d| format!(" {:.0}%", percent(d)))
+            .unwrap_or_default();
+        self.laya_status
+            .set_text(format!("Laya: {}{job}", l.status_text));
+        for m in &self.laya_only {
+            m.set_enabled(snap.settings.run_laya);
+        }
+        self.laya_restart.set_enabled(snap.settings.run_laya);
+        let (text, enabled) = match (&l.update, l.checking, &l.version) {
+            (_, true, _) => ("Checking for Ollaya updates...".to_string(), false),
+            (Some(v), _, _) => (format!("Install Ollaya {v}"), true),
+            (None, _, Some(v)) => (format!("Check for Ollaya updates (have {v})"), true),
+            (None, _, None) => ("Check for Ollaya updates".to_string(), false),
+        };
+        self.laya_update.set_text(text);
+        self.laya_update
+            .set_enabled(enabled && snap.settings.run_laya);
         for (item, pred) in &self.checks {
             item.set_checked(pred(&snap));
         }
@@ -561,6 +646,9 @@ impl Ui {
             Request::ViewLog => Act::ViewLog,
             Request::EditSettingsFile => Act::EditSettings,
             Request::Exit => Act::Exit,
+            Request::RestartLaya => Act::RestartLaya,
+            Request::UpdateLaya => Act::UpdateLaya,
+            Request::ViewLayaLog => Act::ViewLayaLog,
             Request::Download { id } => {
                 // The window has already asked the user.
                 if catalog::find(&id).is_some() {
@@ -624,6 +712,9 @@ impl Ui {
             Act::ViewLog => sys::open_in_notepad(&p.log),
             Act::OpenModels => sys::open_unelevated(&p.models_dir),
             Act::CancelDownload => send(Cmd::CancelDownload),
+            Act::RestartLaya => send(Cmd::RestartLaya),
+            Act::UpdateLaya => send(Cmd::CheckLayaUpdate { manual: true }),
+            Act::ViewLayaLog => sys::open_in_notepad(&p.laya_log),
             Act::Download(id) => {
                 if let Some(m) = catalog::find(&id) {
                     let q = format!(

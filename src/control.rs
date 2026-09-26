@@ -35,6 +35,10 @@ pub enum Request {
     ViewLog,
     EditSettingsFile,
     Exit,
+    RestartLaya,
+    /// Check for a newer Ollaya and install it.
+    UpdateLaya,
+    ViewLayaLog,
 }
 
 impl Request {
@@ -86,6 +90,25 @@ pub struct View {
     pub models: Vec<InstalledModel>,
     pub catalog: Vec<CatalogEntry>,
     pub download: Option<DownloadView>,
+    pub laya: LayaView,
+}
+
+/// Laya (Ollaya) next to the LLM.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayaView {
+    pub tone: Tone,
+    pub status_text: String,
+    pub ready: bool,
+    /// Ollaya's API on this PC
+    pub url: String,
+    /// Installed Ollaya version
+    pub version: Option<String>,
+    /// A newer Ollaya that isn't installed yet
+    pub update: Option<String>,
+    pub checking: bool,
+    /// Installing Ollaya or downloading the model
+    pub job: Option<DownloadView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -217,6 +240,17 @@ mod tests {
         assert_eq!(Event::Focus.to_line(), "{\"type\":\"focus\"}\n");
     }
 
+    #[test]
+    fn laya_requests() {
+        for (line, r) in [
+            (r#"{"cmd":"restart_laya"}"#, Request::RestartLaya),
+            (r#"{"cmd":"update_laya"}"#, Request::UpdateLaya),
+            (r#"{"cmd":"view_laya_log"}"#, Request::ViewLayaLog),
+        ] {
+            assert_eq!(Request::parse(line), Some(r));
+        }
+    }
+
     fn view() -> View {
         View {
             version: "2.1.0".into(),
@@ -235,6 +269,21 @@ mod tests {
             models: vec![],
             catalog: vec![],
             download: None,
+            laya: LayaView {
+                tone: Tone::Loading,
+                status_text: "Downloading laya...".into(),
+                ready: false,
+                url: "http://127.0.0.1:11435".into(),
+                version: Some("0.5.0".into()),
+                update: None,
+                checking: false,
+                job: Some(DownloadView {
+                    id: "laya".into(),
+                    label: "laya".into(),
+                    done: 1,
+                    total: 2,
+                }),
+            },
         }
     }
 
@@ -249,6 +298,10 @@ mod tests {
         assert_eq!(d["update"]["version"], "2.2.0");
         assert_eq!(d["settings"]["StartWithWindows"], true);
         assert_eq!(d["settings"]["Context"], "auto");
+        assert_eq!(d["settings"]["RunLaya"], false);
+        assert_eq!(d["settings"]["LayaDevice"], "auto");
+        assert_eq!(d["laya"]["statusText"], "Downloading laya...");
+        assert_eq!(d["laya"]["job"]["total"], 2);
         // What the window sends back parses as the same settings.
         let (s, w) = Settings::from_json(&d["settings"].to_string());
         assert!(w.is_empty(), "{w:?}");

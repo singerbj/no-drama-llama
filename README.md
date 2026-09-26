@@ -24,6 +24,9 @@ you quit.
   GOG, EA, Ubisoft, Battle.net, Riot, Rockstar, Xbox/Game Pass, Heroic, Humble, HoYoPlay,
   Meta/Oculus and more. It also watches per-process GPU usage, which catches anything the
   launcher check misses. Emulators are optional.
+- **Laya alongside the LLM** (optional): [Ollaya](https://ollaya.dev) serves Laya, a decision
+  model that answers choice, score and yes/no questions about a text in milliseconds, on port
+  11435. It installs, updates, pauses and resumes with the LLM (*Settings → Laya*).
 - **On-screen popup** when the model pauses or resumes. It doesn't take focus and clicks pass
   through it.
 - **Ctrl+Alt+L** turns the LLM on or off from anywhere
@@ -67,6 +70,7 @@ Installer options (from a terminal):
 .\no-drama-llama.exe install --skip-power-settings --skip-wake-on-lan
 .\no-drama-llama.exe install --llama-cpp-tag b6500   # pin a llama.cpp build
 .\no-drama-llama.exe install --update-llama-cpp      # re-download llama.cpp
+.\no-drama-llama.exe install --laya                  # also run Laya (installs Ollaya)
 ```
 
 ## Usage
@@ -91,6 +95,8 @@ curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/jso
 - **Overview**: status, GPU, the context in use, the chat/API address, updates and download progress
 - **Model**: your models, *Download a model*, reasoning and context length
 - **Server & API**: access, port and API key
+- **Laya**: run Laya alongside the LLM, its model, port, device and how long it stays loaded, with
+  its status and download progress
 - **Game detection**: every detection setting, `ExtraGames` and `GpuIgnore`
 - **App**: *Start with Windows*, *Update automatically*, popups, files and *Exit*
 

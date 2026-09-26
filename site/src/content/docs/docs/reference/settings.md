@@ -31,7 +31,13 @@ Invalid values are ignored, and the default is used instead. Each one is logged 
 | `UseWindowsGameList` | `true` | `true` · `false`. Use the games Windows' Game Bar knows about. |
 | `Popups` | `true` | `true` · `false` |
 | `PopupPosition` | `TopCenter` | `TopCenter` · `TopRight` · `BottomRight` · `BottomCenter` |
-| `AutoUpdate` | `true` | `true` · `false`. Install signed updates automatically. |
+| `AutoUpdate` | `true` | `true` · `false`. Install signed updates automatically (and newer Ollaya releases when Laya is on). |
+| `StartWithWindows` | `true` | `true` · `false`. Start the app when you sign in. |
+| `RunLaya` | `false` | `true` · `false`. Run [Laya](/docs/guides/laya/) (Ollaya) alongside the LLM. |
+| `LayaModel` | `laya` | An Ollaya model name: `laya`, `laya:en`, `laya:multilingual`, `laya:typed-decisions`, or another [Ollaya model](https://ollaya.dev/search) (`name`, `name:tag`, `namespace/name:tag`) |
+| `LayaPort` | `11435` | 1024 – 65535, not the same as `Port` |
+| `LayaDevice` | `auto` | `auto` · `cpu` · `cuda`. With `cpu`, Laya keeps running while you play. |
+| `LayaKeepAlive` | `-1` | How long the model stays loaded after a request: `-1` = always, a duration (`5m`, `1h30m`), a number of seconds, or `0` = unload right away |
 
 ## Example
 
@@ -57,4 +63,5 @@ Keys you leave out keep their defaults.
 | --- | --- |
 | `tray.log` | The app's log (rotates at 5 MB) |
 | `server.log` | `llama-server`'s output |
+| `laya.log` | Ollaya's output, when Laya is on |
 | `off.flag` | Present while the model is turned off |

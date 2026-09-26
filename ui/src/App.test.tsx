@@ -168,6 +168,53 @@ describe("models", () => {
   });
 });
 
+describe("Laya", () => {
+  it("turns Laya on, then shows its status and download", async () => {
+    await showTab("Laya");
+    const model = control<HTMLSelectElement>("Model");
+    const fieldset = model.closest("fieldset")!;
+    expect(fieldset.disabled).toBe(true); // off by default
+    await click(control("Run Laya alongside the LLM"));
+    expect(fieldset.disabled).toBe(false);
+    await type(model, "laya:en");
+    expect(savebar()?.textContent).toContain("2 unsaved changes");
+    expect(savebar()?.textContent).not.toContain("restarts"); // Laya isn't running yet
+    await click(button("Save"));
+    expect(saves()).toEqual([{ cmd: "save", settings: { RunLaya: true, LayaModel: "laya:en" } }]);
+    await waitFor(() => expect(document.querySelector(".facts")?.textContent).toContain("Downloading laya:en..."));
+    expect(document.querySelector("section:not([hidden]) .download")?.textContent).toContain("(40%)");
+    await click(button("Restart Laya"));
+    expect(sent).toContainEqual({ cmd: "restart_laya" });
+    await showTab("Overview");
+    expect(document.querySelector(".facts")?.textContent).toContain("http://127.0.0.1:11435");
+  });
+
+  it("says a Laya setting restarts Laya once it runs", async () => {
+    await showTab("Laya");
+    await click(control("Run Laya alongside the LLM"));
+    await click(button("Save"));
+    await waitFor(() => expect(button("Restart Laya")).toBeTruthy()); // the tray confirmed it
+    await type(control<HTMLSelectElement>("Keep the model loaded"), "5m");
+    expect(savebar()?.textContent).toContain("1 unsaved change · saving restarts Laya");
+    await showTab("Server & API");
+    await type(control("Port"), "9000");
+    await type(control<HTMLSelectElement>("Access"), "0.0.0.0");
+    expect(savebar()?.textContent).toContain("saving restarts the model and Laya");
+  });
+
+  it("rejects a port out of range and keeps unknown models from the settings file", async () => {
+    await showTab("Laya");
+    await click(control("Run Laya alongside the LLM"));
+    const port = control("Port");
+    await type(port, "80");
+    expect(port.className).toBe("invalid");
+    expect(button("Save").disabled).toBe(true);
+    await click(button("Revert"));
+    const options = [...control<HTMLSelectElement>("Model").options].map((o) => o.value);
+    expect(options).toEqual(["laya", "laya:en", "laya:multilingual", "laya:typed-decisions"]);
+  });
+});
+
 describe("keyboard", () => {
   it("saves with Ctrl+S", async () => {
     await showTab("App");

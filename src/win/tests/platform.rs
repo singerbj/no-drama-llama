@@ -235,7 +235,7 @@ fn popup_window_can_be_shown_and_replaced() {
     osd::close_current(); // twice is fine
 }
 
-fn make_zip(path: &std::path::Path, files: &[(&str, &[u8])]) {
+pub(super) fn make_zip(path: &std::path::Path, files: &[(&str, &[u8])]) {
     let mut w = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
     let opts =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);

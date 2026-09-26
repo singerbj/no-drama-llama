@@ -4,6 +4,7 @@
 //! settings. It is read by an elevated process and turned into a command line, so every
 //! value is validated; anything invalid falls back to its default and is reported.
 
+use crate::laya::{self, Device as LayaDevice};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::path::Path;
@@ -128,6 +129,14 @@ pub struct Settings {
     pub auto_update: bool,
     /// Start the app when you sign in to Windows (the logon task's trigger).
     pub start_with_windows: bool,
+    /// Run Laya (a decision model, served by Ollaya) alongside the LLM.
+    pub run_laya: bool,
+    /// Ollaya model name, e.g. `laya` or `laya:en`.
+    pub laya_model: String,
+    pub laya_port: u16,
+    pub laya_device: LayaDevice,
+    /// Ollaya's `keep_alive` (`-1` = keep loaded, `5m`, `0` = unload after each request).
+    pub laya_keep_alive: String,
 }
 
 impl Default for Settings {
@@ -152,6 +161,11 @@ impl Default for Settings {
             gpu_ignore: Vec::new(),
             auto_update: true,
             start_with_windows: true,
+            run_laya: false,
+            laya_model: laya::DEFAULT_MODEL.into(),
+            laya_port: laya::DEFAULT_PORT,
+            laya_device: LayaDevice::Auto,
+            laya_keep_alive: laya::DEFAULT_KEEP_ALIVE.into(),
         }
     }
 }
@@ -167,7 +181,7 @@ pub fn server_changed(a: &Settings, b: &Settings) -> bool {
 }
 
 /// Every key in settings.json, as written.
-pub const KEYS: [&str; 19] = [
+pub const KEYS: [&str; 24] = [
     "Model",
     "Reasoning",
     "Context",
@@ -187,6 +201,11 @@ pub const KEYS: [&str; 19] = [
     "GpuIgnore",
     "AutoUpdate",
     "StartWithWindows",
+    "RunLaya",
+    "LayaModel",
+    "LayaPort",
+    "LayaDevice",
+    "LayaKeepAlive",
 ];
 
 /// `Context` value meaning "as much as fits" (llama.cpp's --fit picks it).
@@ -317,6 +336,30 @@ impl Settings {
                 "Popups" => v.as_bool().map(|b| s.popups = b).is_some(),
                 "AutoUpdate" => v.as_bool().map(|b| s.auto_update = b).is_some(),
                 "StartWithWindows" => v.as_bool().map(|b| s.start_with_windows = b).is_some(),
+                "RunLaya" => v.as_bool().map(|b| s.run_laya = b).is_some(),
+                "LayaModel" => v
+                    .as_str()
+                    .filter(|m| laya::is_valid_model_name(m))
+                    .map(|m| s.laya_model = m.into())
+                    .is_some(),
+                "LayaPort" => as_u64(v)
+                    .filter(|p| (1024..=65535).contains(p))
+                    .map(|p| s.laya_port = p as u16)
+                    .is_some(),
+                "LayaDevice" => v
+                    .as_str()
+                    .and_then(LayaDevice::parse)
+                    .map(|d| s.laya_device = d)
+                    .is_some(),
+                "LayaKeepAlive" => (match v {
+                    Value::String(t) => Some(t.clone()),
+                    // A number of seconds, as Ollaya takes it
+                    Value::Number(n) => Some(n.to_string()),
+                    _ => None,
+                })
+                .filter(|k| laya::is_valid_keep_alive(k))
+                .map(|k| s.laya_keep_alive = k)
+                .is_some(),
                 "PopupPosition" => v
                     .as_str()
                     .and_then(PopupPosition::parse)
@@ -864,6 +907,11 @@ mod more_tests {
             gpu_ignore: vec!["i".into()],
             auto_update: false,
             start_with_windows: false,
+            run_laya: true,
+            laya_model: "laya:multilingual".into(),
+            laya_port: 12345,
+            laya_device: LayaDevice::Cpu,
+            laya_keep_alive: "30m".into(),
         };
         let (back, w) = Settings::from_json(&custom.to_json());
         assert!(w.is_empty(), "{w:?}");
@@ -893,6 +941,37 @@ mod more_tests {
         );
         assert!(d.api_key.is_empty() && d.extra_games.is_empty() && d.gpu_ignore.is_empty());
         assert_eq!(serde_json::to_value(d.reasoning).unwrap(), "low");
+        assert!(!d.run_laya, "Laya is opt-in");
+        assert_eq!(
+            (d.laya_model.as_str(), d.laya_port, d.laya_device),
+            ("laya", 11435, LayaDevice::Auto)
+        );
+        assert_eq!(d.laya_keep_alive, "-1");
+    }
+
+    #[test]
+    fn laya_settings() {
+        assert!(accepted("RunLaya", "true").run_laya);
+        rejected("RunLaya", "\"yes\"");
+        assert_eq!(accepted("LayaModel", "\"laya:en\"").laya_model, "laya:en");
+        for bad in ["\"\"", "\"evil.com/laya\"", "\"laya --x\"", "1", "null"] {
+            rejected("LayaModel", bad);
+        }
+        assert_eq!(accepted("LayaPort", "12000").laya_port, 12000);
+        for bad in ["80", "65536", "\"x\""] {
+            rejected("LayaPort", bad);
+        }
+        for d in ["auto", "cpu", "cuda"] {
+            let s = accepted("LayaDevice", &format!("\"{d}\""));
+            assert_eq!(s.laya_device.as_str(), d);
+        }
+        rejected("LayaDevice", "\"cuda:0\"");
+        assert_eq!(accepted("LayaKeepAlive", "\"5m\"").laya_keep_alive, "5m");
+        assert_eq!(accepted("LayaKeepAlive", "300").laya_keep_alive, "300");
+        assert_eq!(accepted("LayaKeepAlive", "-1").laya_keep_alive, "-1");
+        for bad in ["\"forever\"", "\"\"", "true", "[]"] {
+            rejected("LayaKeepAlive", bad);
+        }
     }
 
     #[test]
@@ -985,6 +1064,9 @@ mod more_tests {
                 prop_assert!(s.listen_host == "127.0.0.1" || s.listen_host == "0.0.0.0");
                 prop_assert!(s.port >= 1024);
                 prop_assert!(s.context == CONTEXT_AUTO || (512..=1_048_576).contains(&s.context));
+                prop_assert!(laya::is_valid_model_name(&s.laya_model));
+                prop_assert!(laya::is_valid_keep_alive(&s.laya_keep_alive));
+                prop_assert!(s.laya_port >= 1024);
                 let (again, w) = Settings::from_json(&s.to_json());
                 prop_assert!(w.is_empty(), "{:?}", w);
                 prop_assert_eq!(again, s);

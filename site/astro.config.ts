@@ -46,6 +46,7 @@ export default defineConfig({
             { label: 'Chat and API', slug: 'docs/guides/api' },
             { label: 'Models and GPUs', slug: 'docs/guides/models' },
             { label: 'Game detection', slug: 'docs/guides/game-detection' },
+            { label: 'Laya (decision model)', slug: 'docs/guides/laya' },
             { label: 'Use it from other devices', slug: 'docs/guides/network' },
             { label: 'Always-on PC', slug: 'docs/guides/always-on' },
             { label: 'Updates', slug: 'docs/guides/updates' },

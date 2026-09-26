@@ -15,6 +15,7 @@ edition are migrated automatically.
 | `update.rs` | any | Update rules: version comparison, asset selection, digest check, minisign verification |
 | `hardware.rs` | any | `--list-devices` / `nvidia-smi` parsing, backend choice, llama.cpp asset selection, context from the log |
 | `catalog.rs` | any | Downloadable models, how well each fits this PC, the recommendation |
+| `laya.rs` | any | Laya via Ollaya: settings values, the daemon's environment, release assets and checksums, pull progress, Laya's state machine |
 | `setup.rs` | any | Install/uninstall logic: task XML, settings backup and restore, `powercfg` parsing, PowerShell-edition migration |
 | `cli.rs` | any | Command-line parsing |
 | `control.rs` | any | Messages between the tray and the settings window |
@@ -29,6 +30,7 @@ edition are migrated automatically.
 | `win/install.rs` | Windows | `install` / `uninstall` subcommands |
 | `win/probe.rs` | Windows | Runs `nvidia-smi`, `llama-server --list-devices` / `--help` (with timeouts); reads RAM |
 | `win/models.rs` | Windows | Hugging Face model downloads: resumable, verified, cancellable, multi-part |
+| `win/laya.rs` | Windows | Installs Ollaya from its GitHub releases, starts `ollaya serve`, pulls and loads the model over its API |
 | `win/updater.rs`, `win/net.rs` | Windows | GitHub Releases, verified resumable downloads, `/health` checks |
 
 Everything that makes a decision is platform-independent and unit-tested on Linux and Windows.
@@ -102,6 +104,37 @@ startup, so no popup appears over a game at boot. Property tests check the safet
 thousands of random event sequences: never run while off or while a game is held, never start
 twice, and report Running only when `/health` says ready.
 
+## Laya (Ollaya) alongside the LLM
+
+[Ollaya](https://ollaya.dev) serves decision models such as Laya from one daemon,
+`ollaya serve`. The worker runs it as a second supervised service with its own state machine
+(`laya::Machine`), stepped right after the LLM's each tick:
+
+```
+  RunLaya off ──► Disabled        settings problem (port clash) ──► Error
+  off.flag ──► Off                LLM Paused and LayaDevice ≠ cpu ──► Paused     (daemon killed)
+  not installed / GPU pack wanted / update ──► Installing (job) ──► Starting ──► GET / = 200
+      ──► model not in /api/tags ──► Downloading (job: POST /api/pull, NDJSON progress)
+      ──► not loaded ──► Loading (job: POST /api/decide without state = load + keep_alive)
+      ──► Ready
+```
+
+- **One job at a time** (install, pull, load) runs on its own thread and reports back with a
+  `Cmd::LayaJobDone`. A job's result is ignored if the daemon it was for has been stopped since
+  (a generation counter). A failed job shows as an error and retries after 2 minutes, doubling up
+  to an hour. Three exits before ready is *keeps crashing*, like llama-server.
+- **Configuration** is `ollaya serve`'s environment: `OLLAYA_HOST` (`ListenHost:LayaPort`),
+  `OLLAYA_MODELS`, `OLLAYA_KEEP_ALIVE`, `OLLAYA_DEVICE`, `OLLAYA_API_KEY` (the LLM's key). Any
+  other `OLLAYA_*` variable is removed, so a user's own Ollaya setup can't leak in.
+- **Processes:** the daemon starts one runner per model (a copy of the exe in the GPU pack on
+  NVIDIA). Everything running from `C:\LLM\ollaya\` is ours: it's what stop kills, and it's
+  excluded from GPU game detection.
+- **Install:** the latest release's `ollaya-windows-amd64.zip`, plus `ollaya-windows-amd64-cuda.zip`
+  when an NVIDIA driver R580+ and a Turing or newer card are there and `LayaDevice` isn't `cpu`.
+  Each archive must match the release's `sha256sum.txt` (and GitHub's digest). An unchanged GPU
+  pack is kept (its `FILES.sha256` list and every file are checked), as Ollaya's own installer
+  does. Files are staged, then swapped in; `models\` is kept. `install.json` records the version.
+
 ## Fitting any GPU
 
 - **Backend:** `hardware::choose_backend` reads `nvidia-smi`:
@@ -145,7 +178,8 @@ twice, and report Running only when `/health` says ready.
 %ProgramFiles%\No Drama Llama\no-drama-llama.exe   admin-only (Windows default)
 C:\LLM\                 Administrators + SYSTEM: full, Users: read (inheritance from C:\ removed)
   llama\                llama.cpp (run elevated)
-  data\                 settings.json, off.flag, tray.log, server.log
+  ollaya\               Ollaya when Laya is on (run elevated): bin\, lib\, models\, install.json
+  data\                 settings.json, off.flag, tray.log, server.log, laya.log
   models\               + you: modify (drop in .gguf files)
   settings-backup.json  your original power/network settings
 ```

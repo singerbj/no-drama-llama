@@ -6,6 +6,7 @@
 //!   llama\               llama.cpp binaries
 //!   data\                settings.json, off.flag, logs
 //!   models\              *.gguf (you can add your own)
+//!   ollaya\              Ollaya, which runs Laya (bin\ollaya.exe, lib\, its models\)
 //!   settings-backup.json your original Windows settings, restored on uninstall
 //! ```
 
@@ -28,13 +29,24 @@ pub struct Paths {
     pub log: PathBuf,
     pub server_log: PathBuf,
     pub backup: PathBuf,
+    /// Ollaya's install: `bin\ollaya.exe`, `lib\ollaya\`, `share\`, `install.json`
+    pub ollaya_dir: PathBuf,
+    pub ollaya_exe: PathBuf,
+    /// Ollaya's model store (`OLLAYA_MODELS`)
+    pub ollaya_models: PathBuf,
+    pub laya_log: PathBuf,
 }
 
 impl Paths {
     pub fn under(root: impl Into<PathBuf>) -> Paths {
         let root = root.into();
         let data_dir = root.join("data");
+        let ollaya_dir = root.join("ollaya");
         Paths {
+            ollaya_exe: ollaya_dir.join("bin").join("ollaya.exe"),
+            ollaya_models: ollaya_dir.join("models"),
+            laya_log: data_dir.join("laya.log"),
+            ollaya_dir,
             llama_dir: root.join("llama"),
             server_exe: root.join("llama").join("llama-server.exe"),
             models_dir: root.join("models"),
@@ -50,6 +62,13 @@ impl Paths {
 
     pub fn system() -> Paths {
         Paths::under(r"C:\LLM")
+    }
+
+    /// What the app installed of Ollaya (`None` = nothing, or an older unreadable record).
+    pub fn ollaya_record(&self) -> Option<crate::laya::Installed> {
+        std::fs::read_to_string(self.ollaya_dir.join("install.json"))
+            .ok()
+            .and_then(|t| crate::laya::Installed::parse(&t))
     }
 
     pub fn model(&self, name: &str) -> PathBuf {
@@ -178,12 +197,39 @@ mod more_tests {
         assert_eq!(s(&p.log), r"C:\LLM\data\tray.log");
         assert_eq!(s(&p.server_log), r"C:\LLM\data\server.log");
         assert_eq!(s(&p.backup), r"C:\LLM\settings-backup.json");
+        assert_eq!(s(&p.ollaya_exe), r"C:\LLM\ollaya\bin\ollaya.exe");
+        assert_eq!(s(&p.ollaya_models), r"C:\LLM\ollaya\models");
+        assert_eq!(s(&p.laya_log), r"C:\LLM\data\laya.log");
+    }
+
+    #[test]
+    fn ollaya_stays_out_of_the_user_writable_models_folder() {
+        // The elevated app runs ollaya.exe and its runners: admin-only, like llama\.
+        let p = Paths::under("/x");
+        assert!(!p.ollaya_dir.starts_with(&p.models_dir));
+        assert!(p.ollaya_exe.starts_with(&p.ollaya_dir));
+        assert!(p.ollaya_models.starts_with(&p.ollaya_dir));
+    }
+
+    #[test]
+    fn ollaya_record_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = Paths::under(dir.path());
+        assert_eq!(p.ollaya_record(), None);
+        std::fs::create_dir_all(&p.ollaya_dir).unwrap();
+        let r = crate::laya::Installed {
+            version: "0.5.0".into(),
+            gpu_pack: true,
+            gpu_wanted: true,
+        };
+        std::fs::write(p.ollaya_dir.join("install.json"), r.to_json()).unwrap();
+        assert_eq!(p.ollaya_record(), Some(r));
     }
 
     #[test]
     fn user_writable_state_stays_out_of_llama_and_root() {
         let p = Paths::under("/x");
-        for f in [&p.settings, &p.off_flag, &p.log, &p.server_log] {
+        for f in [&p.settings, &p.off_flag, &p.log, &p.server_log, &p.laya_log] {
             assert!(f.starts_with(&p.data_dir), "{}", f.display());
         }
         assert!(

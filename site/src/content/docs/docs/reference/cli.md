@@ -31,6 +31,7 @@ After installing, the exe lives at `C:\Program Files\No Drama Llama\no-drama-lla
 | `--skip-wake-on-lan` | Leaves network adapter wake settings alone |
 | `--llama-cpp-tag <tag>` | Installs this llama.cpp build (the default is the latest), e.g. `b6500` |
 | `--update-llama-cpp` | Downloads llama.cpp again |
+| `--laya` | Turns on [Laya](/docs/guides/laya/) and installs Ollaya now (the tray app downloads the model when it starts) |
 
 ## `uninstall`
 

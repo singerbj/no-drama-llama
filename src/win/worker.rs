@@ -5,9 +5,10 @@
 use super::gpu::{self, GpuSampler};
 use super::libraries::{self, Scanner};
 use super::procs::Procs;
-use super::{install, models, net, probe, sys, updater};
+use super::{install, laya as win_laya, models, net, probe, sys, updater};
 use crate::detect::{self, GameHit, GpuDetector, Scan};
-use crate::hardware::Backend;
+use crate::hardware::{Backend, NvidiaGpu};
+use crate::laya::{self, Hold, Job};
 use crate::paths::Paths;
 use crate::server::ServerCaps;
 use crate::settings::{self, Settings};
@@ -52,6 +53,21 @@ pub enum Cmd {
         switch: bool,
         result: Result<(), String>,
     },
+    RestartLaya,
+    /// Look for a newer Ollaya; `manual` = install it even without AutoUpdate, and say so.
+    CheckLayaUpdate {
+        manual: bool,
+    },
+    LayaUpdateChecked {
+        manual: bool,
+        result: Result<Option<String>, String>,
+    },
+    LayaJobDone {
+        job: Job,
+        /// The daemon generation the job was for; stale results are ignored
+        generation: u64,
+        result: Result<Option<laya::Installed>, String>,
+    },
     Exit,
 }
 
@@ -70,6 +86,27 @@ struct Download {
     cancel: Arc<AtomicBool>,
 }
 
+/// A Laya job in the background (install Ollaya, pull the model, load it).
+struct LayaJob {
+    job: Job,
+    label: String,
+    done: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
+    cancel: Arc<AtomicBool>,
+    generation: u64,
+}
+
+#[derive(Clone)]
+pub struct LayaSnapshot {
+    pub status: laya::Status,
+    pub status_text: String,
+    pub url: String,
+    pub version: Option<String>,
+    pub update: Option<String>,
+    pub checking: bool,
+    pub job: Option<DownloadInfo>,
+}
+
 #[derive(Clone)]
 pub struct Snapshot {
     pub status: Status,
@@ -85,6 +122,7 @@ pub struct Snapshot {
     pub download: Option<DownloadInfo>,
     /// Context llama.cpp settled on (auto mode), once the server is up
     pub n_ctx: Option<u32>,
+    pub laya: LayaSnapshot,
 }
 
 #[derive(Clone, PartialEq)]
@@ -126,6 +164,24 @@ pub struct Worker {
     n_ctx: Option<u32>,
     /// Hugging Face base URL (a local server in tests)
     pub(crate) hf_base: String,
+    laya: laya::Machine,
+    laya_job: Option<LayaJob>,
+    /// Bumped whenever the daemon starts or stops, so a job's late result for an earlier
+    /// daemon is ignored.
+    laya_generation: u64,
+    /// The model was loaded into this daemon
+    laya_warmed: bool,
+    pub(crate) laya_record: Option<laya::Installed>,
+    /// A newer Ollaya that isn't installed yet
+    laya_update: Option<String>,
+    /// Install it (AutoUpdate, or asked for)
+    laya_reinstall: bool,
+    laya_checking: bool,
+    last_laya_check: Option<Instant>,
+    /// NVIDIA GPUs, probed the first time Laya needs to know
+    pub(crate) nvidia: Option<Vec<NvidiaGpu>>,
+    /// Ollaya's GitHub release API (a local server in tests)
+    pub(crate) laya_release_api: String,
     tx_ui: Sender<UiMsg>,
     tx_self: Sender<Cmd>,
 }
@@ -190,6 +246,17 @@ impl Worker {
             download: None,
             n_ctx: None,
             hf_base: models::HF.to_string(),
+            laya: laya::Machine::default(),
+            laya_job: None,
+            laya_generation: 0,
+            laya_warmed: false,
+            laya_record: p_for_probe.ollaya_record(),
+            laya_update: None,
+            laya_reinstall: false,
+            laya_checking: false,
+            last_laya_check: None,
+            nvidia: None,
+            laya_release_api: win_laya::release_api(),
             tx_ui,
             tx_self,
         };
@@ -204,6 +271,7 @@ impl Worker {
             match rx.recv_timeout(timeout) {
                 Ok(Cmd::Exit) => {
                     self.stop_server("tray exited");
+                    self.stop_laya("tray exited");
                     let _ = self.tx_ui.send(UiMsg::Quit(None));
                     return;
                 }
@@ -217,7 +285,7 @@ impl Worker {
             }
             self.tick();
             next = Instant::now()
-                + if self.download.is_some() {
+                + if self.download.is_some() || self.laya_job.is_some() {
                     Duration::from_secs(1)
                 } else {
                     POLL
@@ -247,6 +315,7 @@ impl Worker {
                 if self.p.off_flag.exists() {
                     let _ = std::fs::remove_file(&self.p.off_flag);
                     self.machine.reset_failures();
+                    self.laya.reset();
                 } else {
                     let _ = std::fs::write(&self.p.off_flag, b"");
                 }
@@ -264,6 +333,7 @@ impl Worker {
                     self.stop_server("settings changed");
                     self.machine.reset_failures();
                 }
+                self.laya_settings_changed(&old);
                 self.sync_start_with_windows();
             }
             Cmd::IgnoreCurrentGame => {
@@ -285,7 +355,8 @@ impl Worker {
             Cmd::ShowGpuReport => {
                 let samples = self.gpu.as_mut().map(|g| g.sample()).unwrap_or_default();
                 self.procs.refresh();
-                let exclude = self.procs.pids_of(&self.p.server_exe);
+                let mut exclude = self.procs.pids_of(&self.p.server_exe);
+                exclude.extend(win_laya::pids(&self.procs, &self.p));
                 let text = detect::gpu_report(&samples, &self.procs.by_pid(), &self.s, &exclude);
                 self.show_text("gpu-usage.txt", &text);
             }
@@ -392,9 +463,307 @@ impl Worker {
                     (Ok(()), None) => {}
                 }
             }
+            Cmd::RestartLaya => {
+                self.stop_laya("restart");
+                self.laya.reset();
+            }
+            Cmd::CheckLayaUpdate { manual } => self.check_laya_update(manual),
+            Cmd::LayaUpdateChecked { manual, result } => {
+                self.laya_checking = false;
+                match result {
+                    Ok(Some(v)) => {
+                        log!("Ollaya {v} is available");
+                        self.laya_update = Some(v);
+                        if manual || self.s.auto_update {
+                            self.laya_reinstall = true;
+                            self.laya.reset(); // install now, even after a failed try
+                        }
+                    }
+                    Ok(None) => {
+                        self.laya_update = None;
+                        if manual {
+                            self.popup(
+                                "Ollaya is up to date",
+                                self.laya_record
+                                    .as_ref()
+                                    .map(|r| format!("Version {}", r.version))
+                                    .unwrap_or_default(),
+                                crate::state::Tone::Running,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log!("Ollaya update check failed: {e}");
+                        if manual {
+                            self.popup("Update check failed", e, crate::state::Tone::Error);
+                        }
+                    }
+                }
+            }
+            Cmd::LayaJobDone {
+                job,
+                generation,
+                result,
+            } => {
+                let cancelled = self
+                    .laya_job
+                    .take()
+                    .is_some_and(|j| j.cancel.load(Ordering::Relaxed));
+                match result {
+                    // For a daemon that has been stopped since: says nothing about this one.
+                    _ if cancelled
+                        || (job != Job::Install && generation != self.laya_generation) =>
+                    {
+                        log!("Laya {} stopped", job.what());
+                    }
+                    Ok(record) => {
+                        self.laya.job_succeeded(job);
+                        match job {
+                            Job::Install => {
+                                if let Some(r) = &record {
+                                    log!(
+                                        "installed Ollaya {} (GPU pack: {})",
+                                        r.version,
+                                        r.gpu_pack
+                                    );
+                                }
+                                self.laya_record = record;
+                                self.laya_update = None;
+                                self.laya_reinstall = false;
+                            }
+                            Job::Pull => log!("downloaded {}", self.s.laya_model),
+                            Job::Load => {
+                                log!("loaded {}", self.s.laya_model);
+                                self.laya_warmed = true;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log!("Laya {} failed: {e}", job.what());
+                        self.laya.job_failed(job, e, Instant::now());
+                    }
+                }
+            }
             Cmd::Exit => {}
         }
         false
+    }
+
+    // ------------------------------------------------------------------ Laya
+
+    fn laya_settings_changed(&mut self, old: &Settings) {
+        if laya::laya_changed(old, &self.s) {
+            self.stop_laya("settings changed");
+            self.laya.reset();
+        }
+    }
+
+    pub(crate) fn stop_laya(&mut self, why: &str) {
+        if let Some(j) = &self.laya_job {
+            if j.job != Job::Install {
+                j.cancel.store(true, Ordering::Relaxed);
+            }
+        }
+        self.procs.refresh();
+        let pids = win_laya::pids(&self.procs, &self.p);
+        if !pids.is_empty() {
+            self.procs.kill(&pids);
+            log!("stopped Ollaya ({why})");
+        }
+        self.laya_generation += 1;
+        self.laya_warmed = false;
+    }
+
+    fn start_laya(&mut self) -> Result<(), String> {
+        win_laya::start(&self.p, &self.s)?;
+        self.laya_generation += 1;
+        self.laya_warmed = false;
+        log!(
+            "started Ollaya ({}, port {}, device {}, keep_alive {})",
+            self.s.laya_model,
+            self.s.laya_port,
+            self.s.laya_device.as_str(),
+            self.s.laya_keep_alive
+        );
+        Ok(())
+    }
+
+    fn nvidia(&mut self) -> &[NvidiaGpu] {
+        self.nvidia.get_or_insert_with(probe::nvidia_gpus)
+    }
+
+    fn check_laya_update(&mut self, manual: bool) {
+        if self.laya_checking || self.laya_job.is_some() {
+            return;
+        }
+        let Some(have) = self.laya_record.as_ref().map(|r| r.version.clone()) else {
+            if manual {
+                self.laya.reset(); // not installed yet: just install
+            }
+            return;
+        };
+        self.laya_checking = true;
+        self.last_laya_check = Some(Instant::now());
+        let (tx, api) = (self.tx_self.clone(), self.laya_release_api.clone());
+        std::thread::spawn(move || {
+            let result = win_laya::latest_release(&api)
+                .map(|r| laya::newer_release(&r, &have).map(|v| v.to_string()))
+                .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Cmd::LayaUpdateChecked { manual, result });
+        });
+    }
+
+    fn run_laya_job(&mut self, job: Job) {
+        if self.laya_job.is_some() {
+            return;
+        }
+        let want_gpu =
+            laya::wants_gpu_pack(&self.nvidia.clone().unwrap_or_default(), self.s.laya_device);
+        let label = match job {
+            Job::Install => format!("Ollaya{}", if want_gpu { " + NVIDIA GPU pack" } else { "" }),
+            Job::Pull | Job::Load => self.s.laya_model.clone(),
+        };
+        let j = LayaJob {
+            job,
+            label,
+            done: Arc::new(AtomicU64::new(0)),
+            total: Arc::new(AtomicU64::new(0)),
+            cancel: Arc::new(AtomicBool::new(false)),
+            generation: self.laya_generation,
+        };
+        let (done, total, cancel, generation) = (
+            j.done.clone(),
+            j.total.clone(),
+            j.cancel.clone(),
+            j.generation,
+        );
+        let (tx, p, s, api) = (
+            self.tx_self.clone(),
+            self.p.clone(),
+            self.s.clone(),
+            self.laya_release_api.clone(),
+        );
+        log!("Laya: starting {} ({})", job.what(), j.label);
+        self.laya_job = Some(j);
+        std::thread::spawn(move || {
+            let progress = |d: u64, t: u64| {
+                done.store(d, Ordering::Relaxed);
+                total.store(t, Ordering::Relaxed);
+            };
+            let result = match job {
+                Job::Install => win_laya::install(&p, &api, want_gpu, progress, &cancel).map(Some),
+                Job::Pull => win_laya::pull(&s, progress, &cancel).map(|_| None),
+                Job::Load => win_laya::load(&s).map(|_| None),
+            }
+            .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Cmd::LayaJobDone {
+                job,
+                generation,
+                result,
+            });
+        });
+    }
+
+    /// Runs Laya's state machine: after the LLM's, so it follows the same off switch and pause.
+    fn tick_laya(&mut self, off: bool) {
+        let s = &self.s;
+        let hold = if off {
+            Hold::Off
+        } else if matches!(self.machine.status(), Status::Paused(_))
+            && laya::uses_gpu(s.laya_device)
+        {
+            Hold::Game
+        } else {
+            Hold::None
+        };
+        let pids = win_laya::pids(&self.procs, &self.p);
+        let running = !pids.is_empty();
+        let active = s.run_laya && hold == Hold::None;
+        let healthy = active && net::is_healthy(&self.health, &laya::health_url(s));
+        let model_present = if healthy && running {
+            win_laya::has_model(&self.health, s)
+        } else {
+            None
+        };
+        let want_gpu = if active {
+            let device = s.laya_device;
+            laya::wants_gpu_pack(self.nvidia(), device)
+        } else {
+            false
+        };
+        let s = &self.s;
+        if active && !self.laya_warmed && laya::unloads_right_away(&s.laya_keep_alive) {
+            self.laya_warmed = true; // nothing to preload
+        }
+        let inputs = laya::Inputs {
+            now: Instant::now(),
+            enabled: s.run_laya,
+            hold,
+            problem: laya::settings_problem(s),
+            needs_install: self.laya_reinstall
+                || laya::needs_install(
+                    self.laya_record.as_ref(),
+                    self.p.ollaya_exe.exists(),
+                    want_gpu,
+                ),
+            job: self.laya_job.as_ref().map(|j| j.job),
+            running,
+            healthy,
+            model_present,
+            warmed: self.laya_warmed,
+            model: s.laya_model.clone(),
+            port: s.laya_port,
+        };
+        let out = self.laya.step(&inputs);
+        for a in out.actions {
+            match a {
+                laya::Action::Stop(why) => self.stop_laya(&why),
+                laya::Action::Start => {
+                    if let Err(e) = self.start_laya() {
+                        log!("{e}");
+                        self.laya.start_failed();
+                    }
+                }
+                laya::Action::Run(job) => self.run_laya_job(job),
+            }
+        }
+        for l in &out.logs {
+            log!("Laya: {l}");
+        }
+        if let (Some(p), true) = (out.popup, self.s.popups) {
+            let _ = self.tx_ui.send(UiMsg::Popup(p));
+        }
+        if self.s.run_laya
+            && self.s.auto_update
+            && self.laya_record.is_some()
+            && self
+                .last_laya_check
+                .is_none_or(|t| t.elapsed() >= UPDATE_EVERY)
+        {
+            self.check_laya_update(false);
+        }
+    }
+
+    fn laya_snapshot(&self) -> LayaSnapshot {
+        let status = self.laya.status().clone();
+        LayaSnapshot {
+            status_text: status.text(&self.s.laya_model),
+            status,
+            url: laya::base_url(&self.s),
+            version: self.laya_record.as_ref().map(|r| r.version.clone()),
+            update: self.laya_update.clone(),
+            checking: self.laya_checking,
+            job: self
+                .laya_job
+                .as_ref()
+                .filter(|j| j.job != Job::Load)
+                .map(|j| DownloadInfo {
+                    id: format!("laya-{}", j.job.what()),
+                    label: j.label.clone(),
+                    done: j.done.load(Ordering::Relaxed),
+                    total: j.total.load(Ordering::Relaxed),
+                }),
+        }
     }
 
     fn start_download(&mut self, id: &str, switch: bool) {
@@ -519,13 +888,12 @@ impl Worker {
         for w in warnings {
             log!("{w}");
         }
-        if settings::server_changed(&self.s, &new) {
-            self.s = new;
+        let old = std::mem::replace(&mut self.s, new);
+        if settings::server_changed(&old, &self.s) {
             self.stop_server("settings changed");
             self.machine.reset_failures();
-        } else {
-            self.s = new;
         }
+        self.laya_settings_changed(&old);
         self.sync_start_with_windows();
     }
 
@@ -569,11 +937,15 @@ impl Worker {
         self.sync_settings_file();
         self.procs.refresh();
         let server_pids = self.procs.pids_of(&self.p.server_exe);
-        let game = self.detect_game(&server_pids);
+        // Our own GPU users are never "a game": llama-server and Ollaya's runners.
+        let mut ours = server_pids.clone();
+        ours.extend(win_laya::pids(&self.procs, &self.p));
+        let game = self.detect_game(&ours);
         let running = !server_pids.is_empty();
+        let off = self.p.off_flag.exists();
         let inputs = Inputs {
             now: Instant::now(),
-            off: self.p.off_flag.exists(),
+            off,
             game,
             resume_after: Duration::from_secs(self.s.resume_after_sec.into()),
             server_running: running,
@@ -612,6 +984,7 @@ impl Worker {
         if let (Some(p), true) = (out.popup, self.s.popups) {
             let _ = self.tx_ui.send(UiMsg::Popup(p));
         }
+        self.tick_laya(off);
 
         if self.s.auto_update
             && self
@@ -646,6 +1019,7 @@ impl Worker {
                 total: d.total.load(Ordering::Relaxed).max(d.model.size),
             }),
             n_ctx: self.n_ctx,
+            laya: self.laya_snapshot(),
         };
         let _ = self.tx_ui.send(UiMsg::State(Box::new(snap)));
     }
