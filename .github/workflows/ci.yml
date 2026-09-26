@@ -22,7 +22,7 @@ jobs:
     name: Rust lint (fmt + clippy, Linux and Windows targets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.98"
@@ -57,7 +57,7 @@ jobs:
       run:
         working-directory: ui
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -87,7 +87,7 @@ jobs:
         # HTTP and end-to-end worker tests.
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.98"
@@ -112,7 +112,7 @@ jobs:
     runs-on: windows-latest
     needs: [rust-lint]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.98"
@@ -146,7 +146,7 @@ jobs:
     name: Dependency advisories
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: Cargo.toml
