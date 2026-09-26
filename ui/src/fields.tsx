@@ -1,6 +1,6 @@
 // One component per kind of setting. Each takes `k`, the settings.json key it edits.
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { useForm } from "./form";
 import type { SettingKey, Settings } from "./types";
 
@@ -35,12 +35,14 @@ function useText<K extends SettingKey>(k: K, format: (v: Settings[K]) => string)
   const form = useForm();
   const saved = form.saved(k);
   const [text, setText] = useState(() => format(form.value(k)));
-  const savedKey = JSON.stringify(saved);
-  const edited = form.isEdited(k);
-  useEffect(() => {
-    if (!edited) setText(format(saved));
-    // Only when the setting itself changes (or on Revert), never while typing.
-  }, [savedKey, form.revision]);
+  // Only when the setting itself changes (or on Revert), never while typing. Adjusting state
+  // during render, as React recommends for resetting state when a prop changes.
+  const seen = `${form.revision}|${JSON.stringify(saved)}`;
+  const [lastSeen, setLastSeen] = useState(seen);
+  if (seen !== lastSeen) {
+    setLastSeen(seen);
+    if (!form.isEdited(k)) setText(format(saved));
+  }
   return [text, setText] as const;
 }
 
@@ -109,11 +111,11 @@ interface TextProps {
   pattern: RegExp;
   maxLength: number;
   placeholder?: string;
-  /** Replaces the text, e.g. a Generate button. */
-  extra?: (set: (text: string) => void) => ReactNode;
+  /** Adds a Generate button that fills in a new value. */
+  generate?: () => string;
 }
 
-export function TextField({ k, label, hint, pattern, maxLength, placeholder, extra }: TextProps) {
+export function TextField({ k, label, hint, pattern, maxLength, placeholder, generate }: TextProps) {
   const form = useForm();
   const id = useId();
   const [text, setText] = useText(k, String);
@@ -137,7 +139,11 @@ export function TextField({ k, label, hint, pattern, maxLength, placeholder, ext
           aria-invalid={form.isInvalid(k)}
           onChange={(e) => set(e.target.value)}
         />
-        {extra?.(set)}
+        {generate && (
+          <button type="button" onClick={() => set(generate())}>
+            Generate
+          </button>
+        )}
       </span>
     </Row>
   );
@@ -267,7 +273,13 @@ export function ModelPicker({ k }: { k: "Model" }) {
     <div className="models" role="radiogroup" aria-label="Installed models">
       {rows.map((m) => (
         <label className="model" key={m.name}>
-          <input type="radio" name="model" value={m.name} checked={m.name === selected} onChange={() => form.edit(k, m.name)} />
+          <input
+            type="radio"
+            name="model"
+            value={m.name}
+            checked={m.name === selected}
+            onChange={() => form.edit(k, m.name)}
+          />
           <span>{m.name}</span>
           <small>{m.size < 0 ? "missing" : gb(m.size)}</small>
         </label>

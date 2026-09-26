@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "unicorn", "oxc", "import", "vitest"],
+  "env": { "browser": true, "es2024": true },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error"
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "error",
+    "react/jsx-key": "error",
+    "react/react-in-jsx-scope": "off",
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css"] }],
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "off",
+    "no-underscore-dangle": ["error", { "allow": ["__TAURI_INTERNALS__"] }],
+    "no-console": ["error", { "allow": ["info", "warn", "error"] }]
+  },
+  "ignorePatterns": ["dist/**"]
+}

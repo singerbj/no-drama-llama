@@ -8,7 +8,15 @@ import type { CatalogEntry, Request } from "./types";
 
 type Cmd = Extract<Request, { cmd: string }>["cmd"];
 
-function Btn({ cmd, children, disabled }: { cmd: Exclude<Cmd, "download" | "save">; children: ReactNode; disabled?: boolean }) {
+function Btn({
+  cmd,
+  children,
+  disabled,
+}: {
+  cmd: Exclude<Cmd, "download" | "save">;
+  children: ReactNode;
+  disabled?: boolean;
+}) {
   const { send } = useForm();
   return (
     <button disabled={disabled} onClick={() => send({ cmd })}>
@@ -153,7 +161,11 @@ export function ModelPanel() {
             ["xhigh", "Extra high"],
           ]}
         />
-        <ContextField k="Context" label="Context length" hint="Auto lets llama.cpp use the largest that fits your GPU." />
+        <ContextField
+          k="Context"
+          label="Context length"
+          hint="Auto lets llama.cpp use the largest that fits your GPU."
+        />
       </Fieldset>
     </>
   );
@@ -163,7 +175,10 @@ export function ModelPanel() {
 
 function generateKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 export function ServerPanel() {
@@ -190,11 +205,7 @@ export function ServerPanel() {
         pattern={/^[A-Za-z0-9._~-]*$/}
         maxLength={128}
         placeholder="(none)"
-        extra={(set) => (
-          <button type="button" onClick={() => set(generateKey())}>
-            Generate
-          </button>
-        )}
+        generate={generateKey}
       />
       <p className="hint">Changes on this page and to the model restart the server when you save.</p>
     </Fieldset>
@@ -210,7 +221,11 @@ export function GamesPanel() {
   return (
     <>
       <Fieldset>
-        <Toggle k="PauseWhileGaming" label="Pause while gaming" hint="Stop the model so the game gets all of your VRAM." />
+        <Toggle
+          k="PauseWhileGaming"
+          label="Pause while gaming"
+          hint="Stop the model so the game gets all of your VRAM."
+        />
         <Choice
           k="DetectionMode"
           label="Detect games by"
@@ -220,7 +235,14 @@ export function GamesPanel() {
             ["Launchers", "Launchers only"],
           ]}
         />
-        <NumberField k="ResumeAfterSec" label="Resume after the game closes" hint="Seconds, 0 - 3600" min={0} max={3600} integer />
+        <NumberField
+          k="ResumeAfterSec"
+          label="Resume after the game closes"
+          hint="Seconds, 0 - 3600"
+          min={0}
+          max={3600}
+          integer
+        />
       </Fieldset>
       <Fieldset legend="GPU usage" disabled={!pause || mode === "Launchers"}>
         <NumberField

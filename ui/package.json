@@ -1,13 +1,20 @@
 {
   "name": "no-drama-llama-settings",
-  "private": true,
   "version": "0.0.0",
-  "type": "module",
+  "private": true,
   "description": "The settings window's frontend (served by Tauri from ui/dist)",
+  "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "test": "vitest run",
+    "audit": "better-npm-audit audit",
+    "check": "npm run audit && npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
@@ -18,7 +25,12 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "5.2.0",
+    "better-npm-audit": "3.11.0",
+    "jsdom": "30.1.1",
+    "oxfmt": "0.70.0",
+    "oxlint": "1.85.0",
     "typescript": "5.9.3",
-    "vite": "7.3.6"
+    "vite": "7.3.6",
+    "vitest": "5.0.2"
   }
 }

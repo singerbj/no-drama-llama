@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Runs the pull request checks before every commit. Enabled by `npm ci` in ui/ (its prepare
+# script), or by hand: git config core.hooksPath .githooks
+# Skip once with: git commit --no-verify
+exec "$(git rev-parse --show-toplevel)/scripts/check.sh" --staged

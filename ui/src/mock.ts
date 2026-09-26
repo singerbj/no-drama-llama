@@ -28,8 +28,8 @@ const settings: Settings = {
 };
 
 export function mockApi(): Api {
-  let onState: (v: View) => void = () => {};
-  let onSaved: (s: Saved) => void = () => {};
+  let onState: ((v: View) => void) | null = null;
+  let onSaved: ((s: Saved) => void) | null = null;
   const view: View = {
     version: "2.1.0",
     tone: "running",
@@ -52,7 +52,15 @@ export function mockApi(): Api {
       ["qwen3.8-27b:UD-Q6_K_XL", "Qwen 3.8 27B UD-Q6_K_XL", 24.1, "gpuAndRam", "partly in RAM - slow", false, false],
       ["qwen3.8-27b:UD-Q5_K_XL", "Qwen 3.8 27B UD-Q5_K_XL", 20.4, "gpu", "fits your GPU", true, false],
       ["qwen3.8-27b:UD-Q4_K_XL", "Qwen 3.8 27B UD-Q4_K_XL", 17.6, "gpu", "fits your GPU", false, true],
-      ["qwen3.8-flash-next:UD-Q4_K_XL", "Qwen 3.8 Flash-Next UD-Q4_K_XL", 92.3, "tooBig", "too big for this PC", false, false],
+      [
+        "qwen3.8-flash-next:UD-Q4_K_XL",
+        "Qwen 3.8 Flash-Next UD-Q4_K_XL",
+        92.3,
+        "tooBig",
+        "too big for this PC",
+        false,
+        false,
+      ],
     ].map(([id, family, gb, fit, note, recommended, installed]) => ({
       id: id as string,
       label: `${family}  (${gb} GB)`,
@@ -66,7 +74,7 @@ export function mockApi(): Api {
     })),
     download: null,
   };
-  const push = () => setTimeout(() => onState(structuredClone(view)), 50);
+  const push = () => setTimeout(() => onState?.(structuredClone(view)), 50);
   return {
     async send(r: Request) {
       console.info("request", JSON.stringify(r));
@@ -78,9 +86,10 @@ export function mockApi(): Api {
           view.statusText = view.off ? "Off" : "Running - Qwen3.8-27B-UD-Q4_K_XL";
           break;
         case "save": {
-          const warnings = r.settings.Port !== undefined && r.settings.Port < 1024 ? ["invalid Port - not changed"] : [];
+          const warnings =
+            r.settings.Port !== undefined && r.settings.Port < 1024 ? ["invalid Port - not changed"] : [];
           Object.assign(view.settings, r.settings);
-          setTimeout(() => onSaved({ warnings }), 30);
+          setTimeout(() => onSaved?.({ warnings }), 30);
           break;
         }
         case "download": {
