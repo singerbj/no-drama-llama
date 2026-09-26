@@ -2,10 +2,12 @@
 //! real work happens on the worker thread; this thread only renders snapshots and forwards
 //! clicks, so the menu never freezes.
 
+use super::settings_host::Host;
 use super::worker::DownloadInfo;
 use super::worker::{Cmd, Snapshot, UiMsg, UpdateState, Worker};
 use super::{osd, sys};
 use crate::catalog;
+use crate::control::Request;
 use crate::log;
 use crate::paths::{self, Paths};
 use crate::settings::{DetectionMode, PopupPosition, Reasoning, Settings};
@@ -37,7 +39,7 @@ enum Act {
     GpuReport,
     Libraries,
     TestPopup,
-    StartWithWindows,
+    OpenSettings,
     CheckUpdates,
     EditSettings,
     OpenFolder,
@@ -97,6 +99,7 @@ struct Ui {
     snap: Option<Snapshot>,
     icons: HashMap<Tone, Icon>,
     tone: Option<Tone>,
+    settings_window: Host,
 }
 
 impl Ui {
@@ -170,6 +173,7 @@ fn build() -> Ui {
         .map(|t| (t, dot_icon(t)))
         .collect(),
         tone: None,
+        settings_window: Host::default(),
         menu: menu.clone(),
     };
     menu.add(&ui.status);
@@ -183,6 +187,7 @@ fn build() -> Ui {
         menu.add(&i);
     }
     sep(&menu);
+    ui.item(&menu, "Open settings window...", Act::OpenSettings);
 
     let settings = Submenu::new("Settings", true);
     menu.add(&settings);
@@ -333,8 +338,8 @@ fn build() -> Ui {
     ui.check(
         &settings,
         "Start with Windows",
-        Act::StartWithWindows,
-        |n| n.start_with_windows,
+        edit(|s| s.start_with_windows = !s.start_with_windows),
+        |n| n.settings.start_with_windows,
     );
     ui.check(
         &settings,
@@ -435,6 +440,7 @@ impl Ui {
             .map(|b| format!("  ·  llama.cpp {}", b.label()))
             .unwrap_or_default();
         self.gpu_info.set_text(format!("GPU: {gpu}{backend}"));
+        self.settings_window.state(&snap);
         self.snap = Some(snap);
     }
 
@@ -533,9 +539,53 @@ impl Ui {
     }
 
     fn on_menu(&mut self, id: &MenuId, p: &Paths, tx: &Sender<Cmd>) {
-        let Some(act) = self.actions.get(id).cloned() else {
-            return;
+        if let Some(act) = self.actions.get(id).cloned() {
+            self.act(act, p, tx);
+        }
+    }
+
+    /// A request from the settings window: the same actions as the menu.
+    fn on_request(&mut self, r: Request, p: &Paths, tx: &Sender<Cmd>) {
+        let act = match r {
+            Request::Toggle => Act::Toggle,
+            Request::Restart => Act::Restart,
+            Request::OpenChat => Act::OpenChat,
+            Request::IgnoreCurrentGame => Act::IgnoreGame,
+            Request::GpuReport => Act::GpuReport,
+            Request::Libraries => Act::Libraries,
+            Request::TestPopup => Act::TestPopup,
+            Request::CheckForUpdates => Act::CheckUpdates,
+            Request::CancelDownload => Act::CancelDownload,
+            Request::OpenFolder => Act::OpenFolder,
+            Request::OpenModels => Act::OpenModels,
+            Request::ViewLog => Act::ViewLog,
+            Request::EditSettingsFile => Act::EditSettings,
+            Request::Exit => Act::Exit,
+            Request::Download { id } => {
+                // The window has already asked the user.
+                if catalog::find(&id).is_some() {
+                    let _ = tx.send(Cmd::DownloadModel { id, switch: true });
+                }
+                return;
+            }
+            Request::Save { settings } => {
+                // Which values are invalid doesn't depend on the current settings.
+                let warnings = self
+                    .snap
+                    .as_ref()
+                    .map(|s| s.settings.with_patch(&settings).1)
+                    .unwrap_or_default();
+                let _ = tx.send(Cmd::Edit(Box::new(move |s| {
+                    *s = s.with_patch(&settings).0;
+                })));
+                self.settings_window.saved(warnings);
+                return;
+            }
         };
+        self.act(act, p, tx);
+    }
+
+    fn act(&mut self, act: Act, p: &Paths, tx: &Sender<Cmd>) {
         let send = |c: Cmd| {
             let _ = tx.send(c);
         };
@@ -546,9 +596,7 @@ impl Ui {
             Act::IgnoreGame => send(Cmd::IgnoreCurrentGame),
             Act::GpuReport => send(Cmd::ShowGpuReport),
             Act::Libraries => send(Cmd::ShowLibraries),
-            Act::StartWithWindows => send(Cmd::SetStartWithWindows(
-                !self.snap.as_ref().is_some_and(|s| s.start_with_windows),
-            )),
+            Act::OpenSettings => self.settings_window.open(self.snap.as_ref()),
             Act::CheckUpdates => match self.snap.as_ref().map(|s| &s.update) {
                 Some(UpdateState::Available(_)) => sys::open_unelevated(Path::new(&format!(
                     "https://github.com/{}/releases/latest",
@@ -718,6 +766,9 @@ fn pump(
 ) -> Option<Option<String>> {
     while let Ok(e) = MenuEvent::receiver().try_recv() {
         ui.on_menu(&e.id, p, tx);
+    }
+    for r in ui.settings_window.requests() {
+        ui.on_request(r, p, tx);
     }
     while let Ok(e) = TrayIconEvent::receiver().try_recv() {
         if let TrayIconEvent::DoubleClick {

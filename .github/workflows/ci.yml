@@ -29,9 +29,53 @@ jobs:
           components: clippy, rustfmt
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build the settings window's frontend
+        working-directory: ui
+        run: npm ci && npm run build
+      - name: llvm-rc (builds the exe's Windows resources when checking from Linux)
+        run: |
+          if ! command -v llvm-rc >/dev/null; then
+            command -v llvm-rc-18 >/dev/null || ls /usr/lib/llvm-*/bin/llvm-rc >/dev/null 2>&1 ||
+              { sudo apt-get update -qq && sudo apt-get install -y -qq llvm; }
+            rc=$(command -v llvm-rc-18 || ls /usr/lib/llvm-*/bin/llvm-rc | sort -V | tail -n 1)
+            sudo ln -sf "$rc" /usr/local/bin/llvm-rc
+          fi
+          llvm-rc -? | head -n 1
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+
+  ui:
+    name: UI checks (audit, oxfmt, oxlint, typecheck, vitest, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - name: Dependency audit (better-npm-audit)
+        run: npm run audit
+      - name: Format (oxfmt)
+        run: npm run format:check
+      - name: Lint (oxlint)
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests (vitest)
+        run: npm test
+      - name: Build
+        run: npm run build
 
   rust-test:
     name: Rust tests (${{ matrix.os }})
@@ -48,6 +92,14 @@ jobs:
         with:
           toolchain: "1.98"
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build the settings window's frontend
+        working-directory: ui
+        run: npm ci && npm run build
       - name: Build test helpers (fake llama-server)
         run: cargo build --examples
       - name: Test
@@ -65,6 +117,14 @@ jobs:
         with:
           toolchain: "1.98"
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build the settings window's frontend
+        working-directory: ui
+        run: npm ci && npm run build
       - run: cargo build --release --locked
       - name: Smoke test the release binary
         shell: pwsh

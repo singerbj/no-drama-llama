@@ -15,8 +15,9 @@ pub enum Status {
     Error(String),
 }
 
-/// Colour/meaning of a status, shared by the tray icon and the popup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Colour/meaning of a status, shared by the tray icon, the popup and the settings window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Tone {
     Running,
     Loading,

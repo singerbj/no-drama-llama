@@ -18,6 +18,8 @@ you quit.
 
 - **Tray icon** with status (🟢 running · 🟠 loading · 🔵 paused for a game · ⚪ off · 🔴 error)
   and every setting in its right-click menu
+- **Settings window** (*Open settings window...* in the tray menu) with every setting, the
+  model downloads, and the on/off, restart and update controls
 - **Game detection** that works across launchers. It reads the library records of Steam, Epic,
   GOG, EA, Ubisoft, Battle.net, Riot, Rockstar, Xbox/Game Pass, Heroic, Humble, HoYoPlay,
   Meta/Oculus and more. It also watches per-process GPU usage, which catches anything the
@@ -82,6 +84,20 @@ curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/jso
   -d '{"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
+### Settings window
+
+*Open settings window...* in the tray menu opens a small window that has every setting from
+`settings.json`, with the same controls as the menu:
+- **Overview**: status, GPU, the context in use, the chat/API address, updates and download progress
+- **Model**: your models, *Download a model*, reasoning and context length
+- **Server & API**: access, port and API key
+- **Game detection**: every detection setting, `ExtraGames` and `GpuIgnore`
+- **App**: *Start with Windows*, *Update automatically*, popups, files and *Exit*
+
+Changes apply when you click **Save** (or press Ctrl+S). Changes to the model or server settings
+restart the server. The window uses the Microsoft Edge WebView2 Runtime, which Windows 10 and 11
+include.
+
 ### Tray menu
 
 - **Settings → Model**: switch between your models, or *Download a model* (see [Models](#models)).
@@ -120,6 +136,7 @@ hand, and changes apply within a few seconds. Invalid values are ignored and log
 | `DetectEmulators` / `UseWindowsGameList` | `true` / `true` | |
 | `Popups` / `PopupPosition` | `true` / `TopCenter` | `TopCenter` · `TopRight` · `BottomRight` · `BottomCenter` |
 | `AutoUpdate` | `true` | Install signed updates automatically |
+| `StartWithWindows` | `true` | Start the app when you sign in. When off, the Start menu entry still starts it. |
 
 ### Models
 
@@ -186,6 +203,8 @@ app moved from PowerShell to Rust.
 
 ```
 src/        the app: platform-independent logic, and win/ for the Windows code (+ its tests)
+scripts/    check.sh: every PR check, also run by the pre-commit hook in .githooks/
+ui/         the settings window's page (React + TypeScript + Vite), served by Tauri from ui/dist
 tests/      integration tests and fixtures
 examples/   fake_llama_server.rs, the test double the Windows tests run
 docs/       architecture, releasing
@@ -193,11 +212,34 @@ site/       the website and docs (Astro + Starlight), deployed to GitHub Pages
 ```
 
 ```sh
+(cd ui && npm ci && npm run build)   # the settings window's page; needed before any Windows build
+scripts/check.sh                 # every PR check (also the pre-commit hook, see below)
 cargo test                       # platform-independent logic, on any OS
 cargo build --examples && cargo test   # on Windows: also Win32, process, HTTP and end-to-end tests
 cargo clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings   # Windows lint from any OS
 cargo build --release            # target/release/no-drama-llama.exe
+(cd ui && npm run dev)           # the settings page in a browser, with sample data
 ```
+
+### Checks and the pre-commit hook
+
+`scripts/check.sh` runs every pull request check:
+
+- **UI** (`ui/`): `better-npm-audit`, `oxfmt --check`, `oxlint`, `tsc`, `vitest` and the build
+- **Rust**: `cargo fmt --check`, clippy for this OS and for the Windows target, the tests, and
+  `cargo deny check advisories`
+- **Windows only**: the Windows tests, plus the release build and its smoke test
+- **Docs site**: its build, when `site/`, `docs/` or `CHANGELOG.md` changed (`--all` builds it regardless)
+
+The same script is the pre-commit hook in `.githooks/pre-commit`. Running `npm ci` in `ui/`
+turns the hook on (`git config core.hooksPath .githooks`). Skip it once with `git commit --no-verify`.
+
+You also need `cargo install cargo-deny --locked`. Checking the Windows target from Linux or macOS
+also needs LLVM's `llvm-rc` on your PATH (Debian/Ubuntu: `sudo apt-get install llvm`).
+
+Inside `ui/` you can run each check alone: `npm run audit`, `format:check` (or `format` to fix),
+`lint`, `typecheck`, `test`, `build`, or `check` for all of them. `npm run dev` shows the page in
+a browser with sample data.
 
 The test suite includes:
 - unit tests for every module

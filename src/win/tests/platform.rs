@@ -335,6 +335,6 @@ fn updater_never_touches_a_dev_build() {
 fn task_queries_do_not_fail_when_not_installed() {
     // On CI the app isn't installed; these must just say "no".
     if !install::task_exists() {
-        assert!(!install::task_enabled());
+        assert_eq!(install::logon_start(), None);
     }
 }

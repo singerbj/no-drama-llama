@@ -1,2 +1,6 @@
 /target/
 *.zip
+# Tauri build output and the settings window's frontend build
+/gen/
+/ui/node_modules/
+/ui/dist/

@@ -7,6 +7,13 @@ updates:
     groups:
       rust-deps:
         patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+    groups:
+      ui-deps:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

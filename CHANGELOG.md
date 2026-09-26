@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). The version lives in `Cargo.toml`.
 
+## [Unreleased]
+
+### Added
+- **Settings window** (*Open settings window...* in the tray menu). It has every setting, the
+  model catalog with downloads, and on/off, restart, open chat and update controls. It's built
+  with Tauri 2 (WebView2), React and TypeScript. It runs as a child process of the tray
+  (`settings-window`), talks to it over stdin/stdout, and is compiled into the same exe.
+- New setting `StartWithWindows` (default `true`). The tray's *Start with Windows* item now uses
+  it too. Turning it off disables the logon trigger rather than the whole task, so the Start menu
+  entry still starts the app. Existing installs keep the choice they made in the menu.
+- UI checks in CI: `better-npm-audit`, `oxfmt`, `oxlint` and `vitest` tests of the settings window.
+- `scripts/check.sh` runs every pull request check, and the pre-commit hook in `.githooks/` runs it
+  before each commit (enabled by `npm ci` in `ui/`).
+
 ## [2.0.0]
 
 A single self-installing app, written in Rust, replaces the PowerShell scripts. It keeps the

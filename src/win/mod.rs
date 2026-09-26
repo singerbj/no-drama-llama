@@ -8,6 +8,8 @@ pub mod net;
 pub mod osd;
 pub mod probe;
 pub mod procs;
+pub mod settings_app;
+pub mod settings_host;
 pub mod sys;
 pub mod tray;
 pub mod updater;
@@ -89,6 +91,7 @@ pub fn main() -> i32 {
             0
         }
         Command::Run { after_update } => tray::run(Paths::system(), after_update),
+        Command::SettingsWindow => settings_app::run(),
         Command::Install(a) => {
             if !sys::is_elevated() {
                 return match sys::run_elevated(&cli::install_args_string(&a), true) {

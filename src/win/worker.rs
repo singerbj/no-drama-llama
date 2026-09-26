@@ -33,7 +33,6 @@ pub enum Cmd {
     IgnoreCurrentGame,
     ShowGpuReport,
     ShowLibraries,
-    SetStartWithWindows(bool),
     CheckForUpdates {
         manual: bool,
     },
@@ -78,7 +77,6 @@ pub struct Snapshot {
     pub settings: Settings,
     pub models: Vec<(String, u64)>,
     pub game_process: Option<String>,
-    pub start_with_windows: bool,
     pub update: UpdateState,
     /// GPU memory + RAM, for the model catalog's "fits your GPU" notes
     pub pc: crate::catalog::Machine,
@@ -116,7 +114,8 @@ pub struct Worker {
     scan: Scan,
     scan_at: Instant,
     health: ureq::Agent,
-    start_with_windows: bool,
+    /// Whether the logon task starts the app; None = no task (not installed, e.g. tests)
+    logon_start: Option<bool>,
     update: UpdateState,
     last_update_check: Option<Instant>,
     caps: ServerCaps,
@@ -137,6 +136,7 @@ fn mtime(p: &std::path::Path) -> Option<SystemTime> {
 
 impl Worker {
     pub fn new(p: Paths, tx_ui: Sender<UiMsg>, tx_self: Sender<Cmd>) -> Worker {
+        install::adopt_start_with_windows(&p);
         let (s, warnings) = Settings::load(&p.settings);
         for w in warnings {
             log!("{w}");
@@ -168,7 +168,7 @@ impl Worker {
         if gpu.is_none() {
             log!("GPU counters unavailable - GPU-based detection off");
         }
-        Worker {
+        let mut w = Worker {
             settings_mtime: mtime(&p.settings),
             p,
             s,
@@ -180,7 +180,7 @@ impl Worker {
             scan,
             scan_at: Instant::now(),
             health: net::health_agent(),
-            start_with_windows: install::task_enabled(),
+            logon_start: install::logon_start(),
             update: UpdateState::None,
             last_update_check: None,
             caps,
@@ -192,7 +192,9 @@ impl Worker {
             hf_base: models::HF.to_string(),
             tx_ui,
             tx_self,
-        }
+        };
+        w.sync_start_with_windows();
+        w
     }
 
     pub fn run(mut self, rx: Receiver<Cmd>) {
@@ -262,6 +264,7 @@ impl Worker {
                     self.stop_server("settings changed");
                     self.machine.reset_failures();
                 }
+                self.sync_start_with_windows();
             }
             Cmd::IgnoreCurrentGame => {
                 if let Some(proc) = self.machine.game().and_then(|g| g.process.clone()) {
@@ -291,12 +294,6 @@ impl Worker {
                 self.scan_at = Instant::now();
                 let text = libraries::report(&self.scan, &self.s.extra_games);
                 self.show_text("game-libraries.txt", &text);
-            }
-            Cmd::SetStartWithWindows(on) => {
-                if let Err(e) = install::set_task_enabled(on) {
-                    log!("couldn't change the logon task: {e}");
-                }
-                self.start_with_windows = install::task_enabled();
             }
             Cmd::CheckForUpdates { manual } => self.check_updates(manual),
             Cmd::UpdateChecked { manual, result } => match result {
@@ -458,6 +455,19 @@ impl Worker {
         });
     }
 
+    /// Makes the logon task follow the StartWithWindows setting (only if the app is installed).
+    fn sync_start_with_windows(&mut self) {
+        let want = self.s.start_with_windows;
+        if self.logon_start.is_none_or(|on| on == want) {
+            return;
+        }
+        match install::set_logon_start(want) {
+            Ok(()) => log!("start with Windows: {}", if want { "on" } else { "off" }),
+            Err(e) => log!("couldn't change start with Windows: {e:#}"),
+        }
+        self.logon_start = install::logon_start();
+    }
+
     fn show_text(&self, name: &str, text: &str) {
         let f = self.p.data_dir.join(name);
         if std::fs::write(&f, text).is_ok() {
@@ -516,6 +526,7 @@ impl Worker {
         } else {
             self.s = new;
         }
+        self.sync_start_with_windows();
     }
 
     fn detect_game(&mut self, server_pids: &[u32]) -> Option<GameHit> {
@@ -624,7 +635,6 @@ impl Worker {
             settings: self.s.clone(),
             models: self.p.list_models(),
             game_process: self.machine.game().and_then(|g| g.process.clone()),
-            start_with_windows: self.start_with_windows,
             update: self.update.clone(),
             pc: self.pc,
             gpu_name: self.gpu_name.clone(),

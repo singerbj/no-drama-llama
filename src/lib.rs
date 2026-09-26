@@ -4,6 +4,7 @@
 
 pub mod catalog;
 pub mod cli;
+pub mod control;
 pub mod detect;
 pub mod hardware;
 pub mod log;

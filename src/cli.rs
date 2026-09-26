@@ -26,6 +26,8 @@ pub enum Command {
         yes: bool,
     },
     Update,
+    /// The settings window (started by the tray, which talks to it over stdin/stdout).
+    SettingsWindow,
     Models,
     Version,
     Help,
@@ -149,6 +151,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             Ok(Command::Uninstall { keep_models, yes })
         }
         "update" if rest.is_empty() => Ok(Command::Update),
+        "settings-window" if rest.is_empty() => Ok(Command::SettingsWindow),
         "models" if rest.is_empty() => Ok(Command::Models),
         "version" | "--version" | "-V" if rest.is_empty() => Ok(Command::Version),
         "help" | "--help" | "-h" | "/?" => Ok(Command::Help),
@@ -321,6 +324,8 @@ mod tests {
     fn misc_commands() {
         assert_eq!(p(&["update"]), Ok(Command::Update));
         assert!(p(&["update", "now"]).is_err());
+        assert_eq!(p(&["settings-window"]), Ok(Command::SettingsWindow));
+        assert!(p(&["settings-window", "x"]).is_err());
         for v in ["version", "--version", "-V"] {
             assert_eq!(p(&[v]), Ok(Command::Version));
         }

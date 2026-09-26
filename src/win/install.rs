@@ -362,8 +362,8 @@ fn restore_backup(p: &Paths) -> Result<()> {
 
 // ------------------------------------------------------------------ task / shortcut / registry
 
-fn register_task(p: &Paths, exe: &Path) -> Result<()> {
-    let xml = setup::task_xml(exe, &sys::current_user_sid()?);
+fn register_task(p: &Paths, exe: &Path, at_logon: bool) -> Result<()> {
+    let xml = setup::task_xml(exe, &sys::current_user_sid()?, at_logon);
     let file = p.root.join("task.xml");
     std::fs::write(&file, setup::utf16le_with_bom(&xml))?;
     let r = sys::run(
@@ -385,24 +385,36 @@ pub fn task_exists() -> bool {
     sys::run("schtasks.exe", &["/query", "/tn", TASK_NAME]).is_ok()
 }
 
-pub fn task_enabled() -> bool {
-    // The State enum name is the same in every display language, unlike schtasks' text output.
-    // A missing task prints nothing (and still exits 0), so only a known "on" state counts.
-    let script = format!("(Get-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction Stop).State");
-    sys::powershell(&script).is_ok_and(|s| setup::task_state_is_enabled(&s))
+/// Whether the app starts when you sign in; `None` = the logon task doesn't exist (not
+/// installed). Uses PowerShell because the State enum name is the same in every display
+/// language, unlike schtasks' text output.
+pub fn logon_start() -> Option<bool> {
+    sys::powershell(&setup::logon_start_query_ps(TASK_NAME))
+        .ok()
+        .and_then(|out| setup::parse_logon_start(&out))
 }
 
-pub fn set_task_enabled(on: bool) -> Result<()> {
-    sys::run(
-        "schtasks.exe",
-        &[
-            "/change",
-            "/tn",
-            TASK_NAME,
-            if on { "/enable" } else { "/disable" },
-        ],
-    )
-    .map(|_| ())
+/// Turns the logon task's trigger on or off (the task stays, for the Start menu entry).
+pub fn set_logon_start(on: bool) -> Result<()> {
+    sys::powershell(&setup::set_logon_start_ps(TASK_NAME, on)).map(|_| ())
+}
+
+/// settings.json from before `StartWithWindows` existed: the tray's old toggle disabled the
+/// whole task, so carry over what it says rather than turning start-at-logon back on.
+pub fn adopt_start_with_windows(p: &Paths) {
+    let Ok(text) = std::fs::read_to_string(&p.settings) else {
+        return;
+    };
+    if Settings::json_has_key(&text, "StartWithWindows") {
+        return;
+    }
+    if let Some(on) = logon_start() {
+        let (mut s, _) = Settings::from_json(&text);
+        s.start_with_windows = on;
+        if s.save(&p.settings).is_ok() {
+            crate::log!("StartWithWindows set to {on} from the logon task");
+        }
+    }
 }
 
 pub fn run_task() -> Result<()> {
@@ -533,12 +545,14 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
     }
 
     step("Start at logon, Start menu entry, Apps & features entry");
-    register_task(&p, &exe)?;
+    adopt_start_with_windows(&p);
+    let at_logon = Settings::load(&p.settings).0.start_with_windows;
+    register_task(&p, &exe, at_logon)?;
     create_shortcut(&exe, &shortcut_path())?;
     register_uninstaller(&exe)?;
     run_task()?;
 
-    let s = crate::settings::Settings::load(&p.settings).0;
+    let s = Settings::load(&p.settings).0;
     println!(
         "\nDone. Look for the dot in the system tray (click ^ if hidden, drag it onto the taskbar to pin).\n\
          Chat + OpenAI-compatible API: http://127.0.0.1:{}   Hotkey: Ctrl+Alt+L   Log: {}\n\
