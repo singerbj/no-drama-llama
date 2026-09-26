@@ -28,6 +28,7 @@ All notable changes to this project are documented here. The format follows
 - UI checks in CI: `better-npm-audit`, `oxfmt`, `oxlint` and `vitest` tests of the settings window.
 - `scripts/check.sh` runs every pull request check, and the pre-commit hook in `.githooks/` runs it
   before each commit (enabled by `npm ci` in `ui/`).
+- The project is licensed under the [MIT License](LICENSE).
 
 ### Fixed
 - Model and llama.cpp downloads no longer fail with "download interrupted" after two minutes. The
