@@ -549,15 +549,21 @@ mod tests {
     }
 
     #[test]
-    fn legacy_lists_match_the_powershell_edition() {
-        // Every script the PowerShell installer copied is cleaned up.
-        let install_ps1 = include_str!("../../src/install.ps1");
-        let line = install_ps1
-            .lines()
-            .find(|l| l.starts_with("$AppFiles"))
-            .unwrap();
-        for f in line.split('\'').filter(|s| s.ends_with(".ps1")) {
+    fn legacy_lists_cover_the_powershell_edition() {
+        for f in [
+            "config.ps1",
+            "llm-tray.ps1",
+            "llm-toggle.ps1",
+            "games.ps1",
+            "gpu.ps1",
+            "osd.ps1",
+            "uninstall.ps1",
+        ] {
             assert!(LEGACY_SCRIPTS.contains(&f), "{f}");
         }
+        assert!(
+            LEGACY_DATA_FILES.contains(&"settings.json") && LEGACY_DATA_FILES.contains(&"off.flag")
+        );
+        assert!(LEGACY_SHORTCUTS.contains(&"Toggle Local LLM.lnk"));
     }
 }

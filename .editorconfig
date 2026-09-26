@@ -4,14 +4,12 @@ root = true
 charset = utf-8
 insert_final_newline = true
 trim_trailing_whitespace = true
+end_of_line = lf
 
-[*.{ps1,psd1}]
-# ASCII only: Windows PowerShell 5.1 reads BOM-less files as ANSI (enforced by tests)
-charset = latin1
+[*.rs]
 indent_style = space
-indent_size = 2
-end_of_line = crlf
+indent_size = 4
 
-[*.{yml,yaml,md}]
+[*.{yml,yaml,md,toml}]
 indent_style = space
 indent_size = 2

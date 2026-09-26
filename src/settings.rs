@@ -774,30 +774,27 @@ mod more_tests {
     }
 
     #[test]
-    fn defaults_match_the_powershell_edition() {
-        let ps = include_str!("../../src/config.ps1");
+    fn defaults() {
         let d = Settings::default();
-        assert!(ps.contains(&format!("$DefaultModel = '{}'", d.model)));
-        for (k, v) in [
-            ("Reasoning", "'low'"),
-            ("ListenHost", "'127.0.0.1'"),
-            ("Port", "8080"),
-            ("DetectionMode", "'Both'"),
-            ("GpuVramGB", "1.5"),
-            ("GpuLoadPct", "30"),
-            ("ResumeAfterSec", "60"),
-            ("PopupPosition", "'TopCenter'"),
-        ] {
-            let line = ps
-                .lines()
-                .find(|l| l.trim_start().starts_with(k) && l.contains('='))
-                .unwrap_or_else(|| panic!("{k}"));
-            assert!(line.contains(v), "{k}: {line}");
-        }
-        assert_eq!(serde_json::to_value(d.reasoning).unwrap(), "low");
-        // Context is the one deliberate difference: auto-fit instead of a fixed 32K
+        assert_eq!(d.model, DEFAULT_MODEL);
+        assert_eq!(d.reasoning, Reasoning::Low);
         assert_eq!(d.context, CONTEXT_AUTO);
-        assert!(ps.contains("Context          = 32768"));
+        assert_eq!((d.listen_host.as_str(), d.port), ("127.0.0.1", 8080));
+        assert_eq!(d.detection_mode, DetectionMode::Both);
+        assert_eq!(
+            (d.gpu_vram_gb, d.gpu_load_pct, d.resume_after_sec),
+            (1.5, 30.0, 60)
+        );
+        assert_eq!(d.popup_position, PopupPosition::TopCenter);
+        assert!(
+            d.pause_while_gaming
+                && d.detect_emulators
+                && d.use_windows_game_list
+                && d.popups
+                && d.auto_update
+        );
+        assert!(d.api_key.is_empty() && d.extra_games.is_empty() && d.gpu_ignore.is_empty());
+        assert_eq!(serde_json::to_value(d.reasoning).unwrap(), "low");
     }
 
     #[test]

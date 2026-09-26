@@ -23,7 +23,7 @@ with.
 
 ## Cutting a release
 
-1. Bump `version` in `rust/Cargo.toml` and run `cargo check` to update `Cargo.lock`.
+1. Bump `version` in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
 2. Add a `CHANGELOG.md` entry.
 3. Commit, then tag and push:
 

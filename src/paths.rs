@@ -166,7 +166,8 @@ mod more_tests {
     use super::*;
 
     #[test]
-    fn layout_matches_the_powershell_edition() {
+    fn layout_is_c_llm() {
+        // Same layout as the PowerShell edition, so its installs migrate in place.
         let p = Paths::system();
         assert_eq!(p.root, PathBuf::from(r"C:\LLM"));
         let s = |x: &PathBuf| x.to_string_lossy().replace('/', "\\");
@@ -177,16 +178,6 @@ mod more_tests {
         assert_eq!(s(&p.log), r"C:\LLM\data\tray.log");
         assert_eq!(s(&p.server_log), r"C:\LLM\data\server.log");
         assert_eq!(s(&p.backup), r"C:\LLM\settings-backup.json");
-        // and the PowerShell config agrees
-        let ps = include_str!("../../src/config.ps1");
-        for needle in [
-            "$Root         = 'C:\\LLM'",
-            "\"$Root\\llama\\llama-server.exe\"",
-            "\"$DataDir\\settings.json\"",
-            "\"$Root\\settings-backup.json\"",
-        ] {
-            assert!(ps.contains(needle), "{needle}");
-        }
     }
 
     #[test]

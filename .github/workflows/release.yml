@@ -1,6 +1,6 @@
 name: Release
 
-# Push a tag like v2.0.0 (matching `version` in rust/Cargo.toml) to publish:
+# Push a tag like v2.0.0 (matching `version` in Cargo.toml) to publish:
 #   no-drama-llama.exe          the app (installs itself when run)
 #   no-drama-llama.exe.minisig  minisign signature the in-app updater checks
 #   SHA256SUMS
@@ -23,7 +23,6 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: rust
         shell: pwsh
     steps:
       - uses: actions/checkout@v5
@@ -47,7 +46,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: exe
-          path: rust/target/release/no-drama-llama.exe
+          path: target/release/no-drama-llama.exe
 
   publish:
     needs: build

@@ -1338,40 +1338,6 @@ mod more_tests {
         assert!(EMULATOR_PROCESSES.is_disjoint(&NOT_GAME_PROCESSES));
     }
 
-    #[test]
-    fn lists_match_the_powershell_edition() {
-        let ps = include_str!("../../src/games.ps1");
-        let section = |start: &str| -> Vec<String> {
-            let from = ps.find(start).unwrap();
-            let body = &ps[from..];
-            let end = body.find("\n)").unwrap();
-            body[..end]
-                .split('\'')
-                .skip(1)
-                .step_by(2)
-                .map(|s| s.to_lowercase())
-                .collect()
-        };
-        for n in section("$NotGameProcesses") {
-            assert!(NOT_GAME_PROCESSES.contains(&n), "not-game {n}");
-        }
-        for n in section("$KnownGameProcesses") {
-            assert!(KNOWN_GAME_PROCESSES.contains(&n), "known {n}");
-        }
-        for n in section("$EmulatorProcesses") {
-            assert!(EMULATOR_PROCESSES.contains(&n), "emulator {n}");
-        }
-        let gpu = include_str!("../../src/gpu.ps1");
-        let from = gpu.find("$GpuAlwaysIgnore").unwrap();
-        let body = &gpu[from..from + gpu[from..].find("\n)").unwrap()];
-        for n in body.split('\'').skip(1).step_by(2) {
-            assert!(
-                GPU_ALWAYS_IGNORE.contains(&n.to_lowercase()),
-                "gpu ignore {n}"
-            );
-        }
-    }
-
     fn gpu_procs() -> HashMap<u32, ProcInfo> {
         [
             (4, "System"),

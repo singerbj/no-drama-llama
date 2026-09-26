@@ -183,18 +183,17 @@ app moved from PowerShell to Rust.
 ## Development
 
 ```
-rust/       the app (Rust): src/ (logic + win/ platform code), tests/, examples/fake_llama_server.rs
-src/        the original PowerShell edition (still tested)
-tests/      Pester tests for the PowerShell edition
+src/        the app: platform-independent logic, and win/ for the Windows code (+ its tests)
+tests/      integration tests and fixtures
+examples/   fake_llama_server.rs, the test double the Windows tests run
 docs/       architecture, releasing
 ```
 
 ```sh
-cd rust
 cargo test                       # platform-independent logic, on any OS
 cargo build --examples && cargo test   # on Windows: also Win32, process, HTTP and end-to-end tests
 cargo clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings   # Windows lint from any OS
-cargo build --release            # rust/target/release/no-drama-llama.exe
+cargo build --release            # target/release/no-drama-llama.exe
 ```
 
 The test suite includes:
@@ -202,7 +201,8 @@ The test suite includes:
 - property tests (proptest) for settings validation, detection, the state machine's safety
   rules, update verification and CLI parsing
 - lifecycle simulations (a game launches, closes, launcher hand-offs, false positives)
-- compatibility tests against PowerShell-edition files
+- compatibility tests against files written by the old PowerShell edition, whose installs
+  are migrated automatically
 - Windows-only tests: Win32 helpers, process handling, resumable downloads against a local HTTP
   server, and an end-to-end run of the worker against a fake `llama-server`
 

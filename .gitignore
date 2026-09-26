@@ -1,4 +1,2 @@
-testResults.xml
-dist/
+/target/
 *.zip
-rust/target/

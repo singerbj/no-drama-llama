@@ -2,8 +2,7 @@
 
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
-[Semantic Versioning](https://semver.org/). The app version lives in `rust/Cargo.toml` (2.x); the PowerShell
-edition's in `$AppVersion` in `src/config.ps1` (1.x).
+[Semantic Versioning](https://semver.org/). The version lives in `Cargo.toml`.
 
 ## [2.0.0]
 
@@ -39,6 +38,10 @@ automatically.
     switches when done.
   - Installer options `--model` and `--backend`, and a `models` command.
   - Qwen sampling and reasoning settings only apply to Qwen models.
+
+### Removed
+- The PowerShell edition (scripts, Pester tests, PSScriptAnalyzer config, its CI job). The Rust
+  project now lives at the repository root.
 
 ### Changed
 - The menu stays responsive: detection, health checks and server control run on a worker

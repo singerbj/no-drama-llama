@@ -1,7 +1,4 @@
 * text=auto
-# Windows-native scripts: CRLF in checkouts and release zips
-*.ps1  text eol=crlf
-*.psd1 text eol=crlf
 
 # Test fixtures are compared byte-for-byte (BOM, CRLF, signatures)
-rust/tests/fixtures/** -text
+tests/fixtures/** -text

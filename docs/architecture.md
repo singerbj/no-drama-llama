@@ -1,10 +1,10 @@
 # Architecture
 
-No Drama Llama ships as one Windows executable, `no-drama-llama.exe` (Rust, in `rust/`).
-The original PowerShell edition (`src/`) is still in the repo and still tested. It's described
-at the end of this page.
+No Drama Llama ships as one Windows executable, `no-drama-llama.exe`, written in Rust. It
+replaced an earlier set of PowerShell scripts (see the decision record below). Installs of that
+edition are migrated automatically.
 
-## Components (`rust/src`)
+## Components (`src/`)
 
 | Module | Platform | Role |
 | --- | --- | --- |
@@ -98,7 +98,6 @@ twice, and report Running only when `/health` says ready.
   patterns, known game and emulator names, Windows Game Bar's list, and Steam's `RunningAppID`.
 - **GPU**: another process holds at least `GpuVramGB` of VRAM or at least `GpuLoadPct` of the 3D
   engine on two checks in a row, or an exclusive full-screen D3D app is in the foreground.
-- The name lists match the PowerShell edition's, and a test enforces that.
 
 ## Install layout and trust
 
@@ -153,9 +152,7 @@ Rust was chosen over C# because:
 
 The cost was re-implementing the popup and the GPU counter reader in Win32, about 300 lines.
 
-## PowerShell edition (`src/`)
-
-Same behaviour, as scripts: `install.ps1`/`uninstall.ps1`, and `llm-tray.ps1` run elevated at
-logon, with `llm-toggle.ps1` for the hotkey via a Start-menu shortcut and a flag file. It's
-covered by Pester tests and PSScriptAnalyzer in CI. Installing the Rust edition migrates it
-automatically: it removes the old task, scripts and shortcuts, and keeps settings and models.
+**Migration:** installing the app over the PowerShell edition removes its logon task, scripts
+and shortcuts, and moves its settings into `data\`. The `settings.json` keys, the `C:\LLM`
+layout and the settings backup format are unchanged, so models, settings and the original
+power settings carry over. The PowerShell code itself was removed from the repository in 2.0.0.
