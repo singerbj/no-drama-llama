@@ -51,7 +51,7 @@ jobs:
         run: |
           if (-not $env:NDL_UPDATE_PUBKEY) { Write-Warning "UPDATE_PUBKEY is not set: this build can't auto-update (it will only tell users a new version exists)." }
           cargo build --release --locked
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: exe
           path: target/release/no-drama-llama.exe

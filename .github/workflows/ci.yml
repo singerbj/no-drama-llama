@@ -137,7 +137,7 @@ jobs:
           if ((Run 'install --llama-cpp-tag') -ne 2) { throw 'a bad option must exit with 2' }
           $size = (Get-Item target/release/no-drama-llama.exe).Length / 1MB
           "Release exe: {0:N1} MB" -f $size
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: no-drama-llama-exe
           path: target/release/no-drama-llama.exe
