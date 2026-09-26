@@ -1,7 +1,14 @@
 # Local LLM tray app: runs llama-server, pauses it while gaming, and puts
 # status + controls + settings in a system-tray icon's right-click menu.
 # Started at logon (elevated, hidden) by the scheduled task install.ps1 creates.
+#Requires -Version 5.1
+
+# Runs elevated: only auto-load modules from admin-only locations, never from the
+# user-writable Documents\WindowsPowerShell\Modules folder.
+$env:PSModulePath = @("$PSHOME\Modules", "$env:ProgramFiles\WindowsPowerShell\Modules") -join ';'
+
 . (Join-Path $PSScriptRoot 'config.ps1')
+. (Join-Path $PSScriptRoot 'server.ps1')
 . (Join-Path $PSScriptRoot 'games.ps1')
 . (Join-Path $PSScriptRoot 'gpu.ps1')
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -14,17 +21,23 @@ $created = $false
 $script:Mutex = New-Object System.Threading.Mutex($true, 'Global\LocalLLMTray', [ref]$created)
 if (-not $created) { exit }
 
+New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 function Log($msg) { "$(Get-Date -Format s)  $msg" | Add-Content -Path $LogFile }
-Log 'tray started'
+# Keep the log from growing forever on an always-on PC: one 5 MB generation.
+if ((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt 5MB) { Move-Item $LogFile "$LogFile.1" -Force }
+Log "tray started (v$AppVersion)"
 
-# After an auto sign-in right after boot (power loss, update restart), lock the screen.
+# After an automatic sign-in right after boot (power loss, update restart), lock the screen.
+# Only when auto sign-in is on - someone who just typed their password shouldn't get locked out.
 $uptime = (Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
-if ($uptime.TotalMinutes -lt 3) {
+$autoLogon = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -ErrorAction SilentlyContinue).AutoAdminLogon -eq '1'
+if ($autoLogon -and $uptime.TotalMinutes -lt 3) {
   Log "boot logon detected (uptime $([int]$uptime.TotalSeconds)s) - locking screen"
   rundll32.exe user32.dll,LockWorkStation
 }
 
 $script:S          = Get-Settings
+foreach ($w in $script:SettingsWarnings) { Log $w }
 $script:Status     = ''
 $script:Game       = $null
 $script:Failed     = 0       # consecutive starts that never became ready
@@ -56,28 +69,17 @@ $Icons = @{
 }
 
 # ---------------------------------------------------------------- server
-function Get-Server { Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue }
+# Only our own llama-server (by path): leave any other copy the user runs alone.
+function Get-Server { Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $ServerExe } }
 function Stop-Server { Get-Server | Stop-Process -Force -ErrorAction SilentlyContinue; $script:Pending = $false }
 
 function Start-Server {
   $model = Join-Path $ModelsDir $script:S.Model
   if (-not (Test-Path $model)) { $script:ErrorMsg = "Model missing: $($script:S.Model)"; $script:Failed = 99; return }
   if (-not (Test-Path $ServerExe)) { $script:ErrorMsg = 'llama-server.exe missing'; $script:Failed = 99; return }
-  $kwargs = '{\"reasoning_effort\":\"' + $script:S.Reasoning + '\"}'
-  $a = @(
-    '-m', "`"$model`"",
-    '--host', $script:S.ListenHost, '--port', $script:S.Port,
-    '-ngl', '99', '-c', $script:S.Context, '-fa', 'on',
-    '--cache-type-k', 'q8_0', '--cache-type-v', 'q8_0', '--parallel', '1',
-    '--jinja', '--chat-template-kwargs', "`"$kwargs`""
-  )
-  if ($script:S.Reasoning -in 'none', 'low') {
-    $a += '--temp', '0.7', '--top-p', '0.8', '--top-k', '20', '--presence-penalty', '1.5'
-  } else {
-    $a += '--temp', '1.0', '--top-p', '0.95', '--top-k', '20'
-  }
+  $a = Get-ServerArgs $script:S $model
   Start-Process -FilePath $ServerExe -ArgumentList $a -WindowStyle Hidden `
-    -RedirectStandardError (Join-Path $Root 'server.log')
+    -RedirectStandardError $ServerLog
   $script:Pending = $true
   Log "started server ($($script:S.Model), reasoning=$($script:S.Reasoning), ctx=$($script:S.Context), host=$($script:S.ListenHost))"
 }
@@ -171,7 +173,33 @@ function Set-Status($status, $detail) {
   $script:MiToggle.Text = if ($status -eq 'Off') { 'Turn on' } else { 'Turn off' }
 }
 
+# Settings that change llama-server's command line (need a restart)
+$ServerKeys = 'Model', 'Reasoning', 'Context', 'ListenHost', 'Port', 'ApiKey'
+
+# Pick up hand edits to settings.json ("Edit settings file") without restarting the tray.
+function Save-TraySettings {
+  Save-Settings $script:S
+  $script:SettingsStamp = (Get-Item $SettingsFile).LastWriteTimeUtc
+}
+$script:SettingsStamp = if (Test-Path $SettingsFile) { (Get-Item $SettingsFile).LastWriteTimeUtc }
+function Sync-SettingsFile {   # returns $true if a server setting changed
+  if (-not (Test-Path $SettingsFile)) { return $false }
+  $t = (Get-Item $SettingsFile).LastWriteTimeUtc
+  if ($t -eq $script:SettingsStamp) { return $false }
+  $script:SettingsStamp = $t
+  $old = $script:S
+  $script:S = Get-Settings
+  Log 'settings.json changed - reloaded'
+  foreach ($w in $script:SettingsWarnings) { Log $w }
+  foreach ($k in $ServerKeys) { if ("$($old[$k])" -ne "$($script:S[$k])") { return $true } }
+  $false
+}
+
 function Update-State {
+  if (Sync-SettingsFile) {
+    if (Get-Server) { Stop-Server; Log 'stopped server (settings changed)'; Start-Sleep -Milliseconds 500 }
+    $script:Failed = 0; $script:ErrorMsg = ''
+  }
   $off  = Test-Path $OffFlag
   $script:LastFlag = $off
   $game = Test-Gaming
@@ -215,9 +243,9 @@ function Restart-Server {
 
 function Set-Setting($key, $value) {
   $script:S[$key] = $value
-  Save-Settings $script:S
+  Save-TraySettings
   Log "setting $key = $value"
-  if ($key -in 'Model', 'Reasoning', 'Context', 'ListenHost') { Restart-Server } else { Update-State }
+  if ($key -in $ServerKeys) { Restart-Server } else { Update-State }
 }
 
 function Open-Url($url) { Start-Process explorer.exe $url }   # explorer = opens un-elevated, in your normal browser
@@ -260,7 +288,7 @@ $miRestart = Add-Item $menu 'Restart server' { Restart-Server }
 $settings = Add-Item $menu 'Settings' $null
 $subModel  = Add-Sub $settings 'Model'
 $subReason = Add-Sub $settings 'Reasoning'
-foreach ($r in 'none', 'low', 'medium', 'high', 'xhigh') { [void](Add-Choice $subReason $r 'Reasoning' $r) }
+foreach ($r in 'none', 'low', 'medium', 'xhigh') { [void](Add-Choice $subReason $r 'Reasoning' $r) }
 $subCtx    = Add-Sub $settings 'Context length'
 foreach ($c in 8192, 16384, 32768, 65536, 131072) { [void](Add-Choice $subCtx "$($c / 1024)K tokens" 'Context' $c) }
 $subNet    = Add-Sub $settings 'Access'
@@ -286,13 +314,13 @@ $miNotGame.add_Click({
   $proc = $script:Game.Process
   if (-not $proc) { return }
   $script:S.GpuIgnore = @(@($script:S.GpuIgnore) + $proc | Where-Object { $_ } | Select-Object -Unique)
-  Save-Settings $script:S
+  Save-TraySettings
   Log "added $proc to GpuIgnore"
   $script:LastGame = $null; $script:GpuHits = 0
   Update-State
 })
 [void](Add-Sub $subGames 'Show GPU usage now').add_Click({
-  $out = Join-Path $Root 'gpu-usage.txt'
+  $out = Join-Path $DataDir 'gpu-usage.txt'
   $hdr = "GPU users right now (pause when VRAM >= $($script:S.GpuVramGB) GB or 3D >= $($script:S.GpuLoadPct)% on 2 checks in a row)`r`n" +
          "Ignore list: edit GpuIgnore in the settings file, or use 'Not a game - ignore this app' while paused.`r`n"
   $hdr | Set-Content $out
@@ -307,7 +335,7 @@ $miWinList.add_Click({ Set-Setting 'UseWindowsGameList' (-not $script:S.UseWindo
 [void]$subGames.DropDownItems.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 [void](Add-Sub $subGames 'Rescan and show detected libraries').add_Click({
   $script:Scan = Get-GameLibraries
-  $out = Join-Path $Root 'game-libraries.txt'
+  $out = Join-Path $DataDir 'game-libraries.txt'
   $lines = @("Scanned $($script:Scan.ScannedAt)", '', 'Game library folders (any process running from these = gaming):')
   $lines += $script:Scan.Libs | Sort-Object { $_.Launcher } | ForEach-Object { "  [{0}] {1}{2}" -f $_.Launcher, $_.Dir, $(if ($_.Name) { "  ($($_.Name))" } else { '' }) }
   $lines += '', 'Fallback folder patterns (any drive):'
@@ -342,18 +370,18 @@ $miBoot.add_Click({
 [void]$settings.DropDownItems.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 [void](Add-Sub $settings 'Edit settings file').add_Click({ Start-Process notepad.exe $SettingsFile })
 
-$miFolder = Add-Item $menu 'Open folder' { Open-Url $Root }
-$miLog    = Add-Item $menu 'View log' { Start-Process notepad.exe $LogFile }
+[void](Add-Item $menu 'Open folder' { Open-Url $Root })
+[void](Add-Item $menu 'View log' { Start-Process notepad.exe $LogFile })
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-$miExit   = Add-Item $menu 'Exit (stops the model)' {
+[void](Add-Item $menu 'Exit (stops the model)' {
   $script:Timer.Stop(); $script:FlagTimer.Stop(); Stop-Server; Log 'tray exited'
   $script:Tray.Visible = $false; $script:Tray.Dispose()
   [System.Windows.Forms.Application]::Exit()
-}
+})
 
 # Refresh checkmarks / model list each time the menu opens
 $menu.add_Opening({
-  if (-not (Test-Path $SettingsFile)) { Save-Settings $script:S }
+  if (-not (Test-Path $SettingsFile)) { Save-TraySettings }
   $subModel.DropDownItems.Clear()
   Get-ChildItem $ModelsDir -Filter *.gguf -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notmatch '^mmproj' } |

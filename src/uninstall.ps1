@@ -2,7 +2,9 @@
 # Removes everything install.ps1 did and restores your original Windows settings.
 # Run from an elevated PowerShell in the folder containing these scripts:
 #   powershell -ExecutionPolicy Bypass -File .\uninstall.ps1            # remove everything
-#   powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -KeepModel # keep the 17.6 GB model (moved to Downloads)
+#   powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -KeepModel # keep your models (moved to Downloads)
+# A copy of this script is also installed as C:\LLM\app\uninstall.ps1.
+#Requires -Version 5.1
 param([switch]$KeepModel)
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'config.ps1')
@@ -15,7 +17,8 @@ Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Silent
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
   Where-Object { $_.CommandLine -match 'llm-(guard|tray)\.ps1' } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -eq $ServerExe } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
 # 2. Hotkey shortcut ------------------------------------------------------------
@@ -67,10 +70,12 @@ if ((Get-ItemProperty $wl -ErrorAction SilentlyContinue).AutoAdminLogon -eq '1')
 }
 
 # 5. Files -------------------------------------------------------------------------
-if ($KeepModel -and (Test-Path $ModelFile)) {
+if ($KeepModel) {
   $dest = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads'
-  Move-Item $ModelFile $dest -Force
-  Write-Host "Model kept: $dest\$(Split-Path $ModelFile -Leaf)"
+  foreach ($m in Get-ChildItem $ModelsDir -Filter *.gguf -ErrorAction SilentlyContinue) {
+    Move-Item $m.FullName $dest -Force
+    Write-Host "Model kept: $dest\$($m.Name)"
+  }
 }
 if (Test-Path $Root) {
   Remove-Item $Root -Recurse -Force
