@@ -109,12 +109,9 @@ pub fn run_elevated(args: &str, wait: bool) -> Result<u32> {
 }
 
 /// Use the parent's console if started from a terminal; otherwise open a new one if `alloc`.
-pub fn console(alloc: bool) {
-    unsafe {
-        if AttachConsole(ATTACH_PARENT_PROCESS).is_err() && alloc {
-            let _ = AllocConsole();
-        }
-    }
+/// Returns true if a new console window was opened (so the caller should pause before exit).
+pub fn console(alloc: bool) -> bool {
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS).is_err() && alloc && AllocConsole().is_ok() }
 }
 
 pub fn message(text: &str, error: bool) {

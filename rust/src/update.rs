@@ -16,7 +16,9 @@ pub const SIG_ASSET: &str = "no-drama-llama.exe.minisig";
 /// minisign public key (base64) for verifying updates, baked in from the build environment.
 /// CI passes an empty string when the repository variable isn't set: that means "no key".
 pub fn update_pubkey() -> Option<&'static str> {
-    option_env!("NDL_UPDATE_PUBKEY").map(str::trim).filter(|k| !k.is_empty())
+    option_env!("NDL_UPDATE_PUBKEY")
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
 }
 
 pub fn current_version() -> Version {

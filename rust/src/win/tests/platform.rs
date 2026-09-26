@@ -120,6 +120,11 @@ fn process_table_finds_and_kills_by_path() {
         p.refresh();
         p.pids_of(&exe).contains(&child.id())
     });
+    assert_eq!(
+        p.parent_of(child.id()),
+        Some(std::process::id()),
+        "installer can spare the process that launched it"
+    );
     let upper = std::path::PathBuf::from(exe.to_string_lossy().to_uppercase());
     assert!(
         p.pids_of(&upper).contains(&child.id()),
@@ -134,14 +139,19 @@ fn process_table_finds_and_kills_by_path() {
 #[test]
 fn process_table_matches_command_lines() {
     let marker = format!("ndl-marker-{}", std::process::id());
-    let mut child = sys::hidden("cmd.exe")
-        .args(["/c", "ping", "-n", "30", "127.0.0.1", "&", "rem", &marker])
+    // A single process (no children left behind): PowerShell sleeping, marker in a comment.
+    let mut child = sys::hidden("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("Start-Sleep 30 # {marker}"),
+        ])
         .spawn()
         .unwrap();
     let mut p = Procs::new();
     let mut found = Vec::new();
     wait_until("marked cmd.exe", 10, || {
-        found = p.pids_with_cmdline("cmd.exe", &marker.to_uppercase());
+        found = p.pids_with_cmdline("powershell.exe", &marker.to_uppercase());
         !found.is_empty()
     });
     assert!(found.contains(&child.id()));

@@ -47,12 +47,14 @@ pub fn stop_running(p: &Paths) {
     let _ = sys::run("schtasks.exe", &["/end", "/tn", TASK_NAME]);
     let _ = sys::run("schtasks.exe", &["/end", "/tn", OLD_TASK]);
     let mut procs = Procs::new();
+    // The installed copy only (the tray app, any version) - never this process or the one
+    // that launched it (the non-elevated copy waiting for us, or Settings > Apps).
     let me = std::process::id();
+    let parent = procs.parent_of(me);
     let mut pids: Vec<u32> = procs
-        .list()
+        .pids_of(&paths::installed_exe())
         .into_iter()
-        .filter(|x| x.name.eq_ignore_ascii_case("no-drama-llama") && x.pid != me)
-        .map(|x| x.pid)
+        .filter(|p| *p != me && Some(*p) != parent)
         .collect();
     pids.extend(procs.pids_with_cmdline("powershell.exe", "llm-tray.ps1"));
     pids.extend(procs.pids_with_cmdline("powershell.exe", "llm-guard.ps1"));
@@ -221,6 +223,9 @@ fn install_model(p: &Paths) -> Result<()> {
         }
     };
     let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+    if size > 0 && have > size {
+        let _ = std::fs::remove_file(&part); // corrupt: bigger than the real file
+    }
     if size == 0 || have != size {
         println!("Downloading {DEFAULT_MODEL} ({:.1} GB). Interrupted? Run the installer again to resume.", size as f64 / 1e9);
         let url = format!("https://huggingface.co/{MODEL_REPO}/resolve/main/{DEFAULT_MODEL}");
@@ -339,10 +344,9 @@ pub fn task_exists() -> bool {
 
 pub fn task_enabled() -> bool {
     // The State enum name is the same in every display language, unlike schtasks' text output.
-    sys::powershell(&format!(
-        "(Get-ScheduledTask -TaskName '{TASK_NAME}').State"
-    ))
-    .is_ok_and(|s| !s.trim().eq_ignore_ascii_case("Disabled"))
+    // A missing task prints nothing (and still exits 0), so only a known "on" state counts.
+    let script = format!("(Get-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction Stop).State");
+    sys::powershell(&script).is_ok_and(|s| setup::task_state_is_enabled(&s))
 }
 
 pub fn set_task_enabled(on: bool) -> Result<()> {
@@ -480,6 +484,21 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
     Ok(())
 }
 
+/// The running exe can't delete itself: have cmd remove the install folder a few seconds after
+/// we exit. Call right before exiting.
+pub fn delete_install_dir_after_exit() {
+    let dir = paths::install_dir();
+    if std::env::current_exe().is_ok_and(|e| e.starts_with(&dir)) && dir.exists() {
+        let _ = std::process::Command::new("cmd.exe")
+            .raw_arg(format!(
+                "/c ping -n 4 127.0.0.1 >nul & rmdir /s /q \"{}\"",
+                dir.display()
+            ))
+            .creation_flags(sys::CREATE_NO_WINDOW | sys::DETACHED_PROCESS)
+            .spawn();
+    }
+}
+
 fn prompt(q: &str, default_yes: bool) -> bool {
     print!("{q} {} ", if default_yes { "(Y/n)" } else { "(y/N)" });
     let _ = std::io::stdout().flush();
@@ -549,18 +568,9 @@ pub fn uninstall(keep_models: bool, yes: bool) -> Result<()> {
     }
     let _ = RegKey::predef(HKEY_LOCAL_MACHINE).delete_subkey_all(UNINSTALL_KEY);
     let dir = paths::install_dir();
-    if std::env::current_exe()?.starts_with(&dir) {
-        // Can't delete a running exe: let cmd do it once we've exited.
-        let _ = std::process::Command::new("cmd.exe")
-            .raw_arg(format!(
-                "/c ping -n 4 127.0.0.1 >nul & rmdir /s /q \"{}\"",
-                dir.display()
-            ))
-            .creation_flags(sys::CREATE_NO_WINDOW | sys::DETACHED_PROCESS)
-            .spawn();
-    } else {
+    if !std::env::current_exe()?.starts_with(&dir) {
         let _ = std::fs::remove_dir_all(&dir);
-    }
+    } // else: delete_install_dir_after_exit(), called as the very last thing
     println!(
         "\nDone. Windows-side changes are reverted. Undo these BIOS settings by hand if you changed them:\n  \
          - Restore on AC Power Loss  -> Power Off (or Last State)\n  - ErP / EuP -> Enabled\n  \

@@ -202,6 +202,15 @@ pub fn task_xml(exe: &Path, user_sid: &str) -> String {
     )
 }
 
+/// `Get-ScheduledTask` State output -> whether the task will run at logon. Empty output (no
+/// such task) and `Disabled` are both "no".
+pub fn task_state_is_enabled(state: &str) -> bool {
+    matches!(
+        state.trim().to_ascii_lowercase().as_str(),
+        "ready" | "running" | "queued"
+    )
+}
+
 /// UTF-16LE with BOM, which is what `schtasks /create /xml` expects.
 pub fn utf16le_with_bom(s: &str) -> Vec<u8> {
     let mut bytes = vec![0xFF, 0xFE];
@@ -484,6 +493,22 @@ mod tests {
         assert!(x.contains(r"<Command>C:\A&amp;B &lt;x&gt;\app.exe</Command>"));
         assert!(x.contains("<UserId>S-1&apos;&quot;</UserId>"));
         assert_eq!(xml_escape("&<>\"'"), "&amp;&lt;&gt;&quot;&apos;");
+    }
+
+    #[test]
+    fn task_state() {
+        for on in ["Ready", "Running\r\n", "queued"] {
+            assert!(task_state_is_enabled(on), "{on:?}");
+        }
+        for off in [
+            "",
+            "\r\n",
+            "Disabled",
+            "Unknown",
+            "Get-ScheduledTask : No MSFT_ScheduledTask objects found",
+        ] {
+            assert!(!task_state_is_enabled(off), "{off:?}");
+        }
     }
 
     #[test]

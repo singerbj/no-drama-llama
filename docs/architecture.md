@@ -1,121 +1,129 @@
 # Architecture
 
-## Components
+No Drama Llama ships as one Windows executable, `no-drama-llama.exe` (Rust, in `rust/`).
+The original PowerShell edition (`src/`) is still in the repo and still tested. It's described
+at the end of this page.
 
-| File | Runs as | Role |
+## Components (`rust/src`)
+
+| Module | Platform | Role |
 | --- | --- | --- |
-| `install.ps1` | admin, once | Downloads llama.cpp and the model, sets folder ACLs, power and Wake-on-LAN settings, the logon task, and the hotkey shortcut |
-| `uninstall.ps1` | admin, once | Reverses all of the above from `settings-backup.json` |
-| `llm-tray.ps1` | **elevated**, at logon (scheduled task) | Tray icon, state machine, starts and stops `llama-server` |
-| `llm-toggle.ps1` | you (not elevated), via the Ctrl+Alt+L shortcut | Flips `data\off.flag` |
-| `config.ps1` | dot-sourced | Paths, default settings, settings validation, list of power settings |
-| `server.ps1` | dot-sourced | Builds the `llama-server` command line (pure function, unit-tested) |
-| `games.ps1` | dot-sourced | Finds launcher libraries and matches running processes against them |
-| `gpu.ps1` | dot-sourced | Embedded C#: per-process VRAM and 3D-engine load from Windows performance counters, and whether a full-screen D3D app is running |
-| `osd.ps1` | dot-sourced | Embedded C#: click-through popup that doesn't steal focus |
+| `settings.rs` | any | `settings.json`: defaults, validation of every value, atomic save. Same keys as the PowerShell edition. |
+| `server.rs` | any | Builds the `llama-server` command line (flags, chat-template kwargs, sampling) |
+| `detect.rs` | any | Game matching: launcher folders, name lists, Windows' game list, Steam's running app, GPU-use decision |
+| `state.rs` | any | The state machine (below) |
+| `update.rs` | any | Update rules: version comparison, asset selection, digest check, minisign verification |
+| `setup.rs` | any | Install/uninstall logic: task XML, settings backup and restore, `powercfg` parsing, PowerShell-edition migration |
+| `cli.rs` | any | Command-line parsing |
+| `win/tray.rs` | Windows | UI thread: tray icon and menu, Ctrl+Alt+L hotkey, popups |
+| `win/worker.rs` | Windows | Worker thread: polls every 5 s, runs detection, the state machine, `llama-server` and updates |
+| `win/osd.rs` | Windows | Layered, click-through, never-focused popup window (GDI) |
+| `win/gpu.rs` | Windows | Per-process GPU counters (PDH), full-screen check |
+| `win/libraries.rs` | Windows | Reads each launcher's records to find game folders |
+| `win/procs.rs` | Windows | Process list and exe paths (sysinfo) |
+| `win/install.rs` | Windows | `install` / `uninstall` subcommands |
+| `win/updater.rs`, `win/net.rs` | Windows | GitHub Releases, verified resumable downloads, `/health` checks |
 
-## State machine (`Update-State`, every 5 s, plus a 0.5 s check of the flag file)
+Everything that makes a decision is platform-independent and unit-tested on Linux and Windows.
+The Windows modules gather inputs and carry out actions.
+
+## Threads
 
 ```
-            off.flag exists                     game detected
-  any ───────────────────────► Off      any ───────────────────► Paused   (server killed, VRAM freed)
-                                                                   │
-                                                  no game for ResumeAfterSec
-                                                                   ▼
-  no server ──► Start-Server ──► Loading ──/health = 200──► Running
-                     ▲               │
-                     └── exited before ready (3 times) ──► Error
+ UI thread (message loop, 100 ms timer)          worker thread (every 5 s, or right after a command)
+ ─────────────────────────────────────           ─────────────────────────────────────────────────────
+ tray icon + menu  ── Cmd (Toggle, Edit…) ──►    reload settings.json if edited by hand
+ Ctrl+Alt+L hotkey                               list processes, sample GPU counters, detect game
+ popups            ◄── UiMsg (State, Popup) ──   /health check (≤ 700 ms)
+                                                 Machine::step → start/stop llama-server
+                                                 daily update check (on its own thread)
 ```
 
-Order of precedence: **Off > Paused > Loading/Running**. The server process is killed rather than
-having its model unloaded, which guarantees that all of its VRAM goes back to the game.
+The UI thread never blocks, so the menu stays responsive while a model loads.
 
-Game detection (`DetectionMode`):
+## State machine (`state.rs`)
 
-- **Launchers**: the process's exe is inside a folder found by reading each launcher's own records
-  (Steam `libraryfolders.vdf`, Epic manifests, GOG/EA/Ubisoft/Rockstar registry keys, Riot YAML,
-  Xbox `.GamingRoot`, Heroic/Humble JSON, …). Also matched: default folder patterns, known
-  game and emulator names, Windows Game Bar's list of games, and Steam's `RunningAppID`.
+```
+            off.flag exists                     game detected (or seen < ResumeAfterSec ago)
+  any ───────────────────────► Off      any ───────────────────► Paused   (llama-server killed, VRAM freed)
+
+  no server ──► StartServer ──► Loading ──/health = 200──► Running
+                     ▲              │
+                     └── exited before ready (3 times) ──► Error   (cleared by Turn on / Restart)
+  model or llama-server.exe missing ──► Error   (clears by itself once the file is back)
+```
+
+Precedence is **Off > Paused > Loading/Running**. The app stays silent while it first loads at
+startup, so no popup appears over a game at boot. Property tests check the safety rules across
+thousands of random event sequences: never run while off or while a game is held, never start
+twice, and report Running only when `/health` says ready.
+
+## Game detection
+
+- **Launchers**: the process's exe is inside a folder found in a launcher's own records (Steam
+  via `steamlocate`, Epic manifests, GOG/EA/Ubisoft/Rockstar/Battle.net registry, Riot YAML,
+  Xbox `.GamingRoot`, Heroic/Humble JSON, HoYoPlay, Oculus). Also matched: default folder
+  patterns, known game and emulator names, Windows Game Bar's list, and Steam's `RunningAppID`.
 - **GPU**: another process holds at least `GpuVramGB` of VRAM or at least `GpuLoadPct` of the 3D
   engine on two checks in a row, or an exclusive full-screen D3D app is in the foreground.
-  Browsers, chat apps, overlays and similar programs are on an ignore list.
-- Once a game is gone, the pause is held for `ResumeAfterSec`. This covers loading screens and
-  launcher hand-offs.
+- The name lists match the PowerShell edition's, and a test enforces that.
 
-## Folders and trust boundaries
+## Install layout and trust
 
 ```
-C:\LLM\                 Administrators + SYSTEM: full   Users: read   (inheritance from C:\ removed)
-  app\                  scripts the elevated tray app loads
-  llama\                llama.cpp binaries (run elevated)
-  settings-backup.json  your original Windows settings (read by the elevated uninstaller)
-  data\                 + you: modify    settings.json, off.flag, tray.log, server.log
-  models\               + you: modify    *.gguf
+%ProgramFiles%\No Drama Llama\no-drama-llama.exe   admin-only (Windows default)
+C:\LLM\                 Administrators + SYSTEM: full, Users: read (inheritance from C:\ removed)
+  llama\                llama.cpp (run elevated)
+  data\                 settings.json, off.flag, tray.log, server.log
+  models\               + you: modify (drop in .gguf files)
+  settings-backup.json  your original power/network settings
 ```
 
-The tray app is elevated, and the hotkey is not. The only channel between them is a file in
-`data\`, so everything the elevated side reads from there is treated as untrusted:
+- The app runs **elevated** from a logon scheduled task (no UAC prompt). It needs admin rights
+  to see the exe paths of elevated games and anti-cheat processes.
+- Because it runs elevated, everything it executes is admin-only. `settings.json` is still
+  validated before any value reaches a command line.
+- The hotkey is handled inside the app, so nothing non-elevated needs to write to `C:\LLM`.
+- Downloads are checked against published SHA-256 values (llama.cpp from GitHub's asset digest,
+  the model from Hugging Face's LFS metadata). The llama.cpp zip is extracted with zip-slip
+  protection.
 
-- `off.flag`: only whether it exists is checked.
-- `settings.json`: every key is checked against `$SettingsRules` in `config.ps1`. Unknown keys
-  are dropped, and invalid values fall back to their defaults, before anything reaches a command
-  line.
+## Auto-update
 
-**Why elevated at all?** Without admin rights, `Get-Process` can't read the path of an elevated
-process, and many games and anti-cheat launchers run elevated. Launcher-based detection needs
-that path.
+1. The app checks `releases/latest` daily if *Update automatically* is on, or on demand from the menu.
+2. It only takes a newer, non-prerelease semver release that has both `no-drama-llama.exe` and
+   `no-drama-llama.exe.minisig`.
+3. It downloads both and checks GitHub's asset digest. It then verifies the **minisign
+   signature** against the public key baked in at build time (`NDL_UPDATE_PUBKEY`). The
+   signature's trusted comment must be exactly `no-drama-llama <that version>`, so a validly
+   signed old build can't be passed off under a newer tag.
+4. It swaps the running exe (`self-replace`), updates the Apps & features version, and relaunches
+   with `run --after-update <old>`. The new instance waits for the single-instance mutex and
+   takes over the still-running `llama-server` without reloading it.
 
-## Decision record: why PowerShell?
+A build without a key (local or fork builds) only reports that an update exists.
+[releasing.md](releasing.md) covers key setup.
 
-**Status:** kept, with conditions for revisiting (below).
+## Decision record: PowerShell → Rust
 
-The install and uninstall scripts are clearly a good fit for PowerShell. Everything they touch is
-first-class in it: `powercfg`, the NetAdapter and ScheduledTasks modules, the registry, ACLs and
-`.lnk` shortcuts. It also ships with every copy of Windows 10 and 11, so there's nothing extra
-to install.
+The PowerShell edition worked, but it was a poor way to ship the app to other people:
+- users had to run it with `-ExecutionPolicy Bypass`
+- a hidden, elevated script compiling C# looks like malware to antivirus software
+- it had no installer entry and no update path
+- it used about 100–150 MB of RAM
 
-For the tray app it's a reasonable choice, with trade-offs:
+Rust was chosen over C# because:
+- It builds to a single static exe of a few MB that uses little memory and needs no runtime.
+- Mature crates cover the platform plumbing: `tray-icon` + `muda`, `global-hotkey`, Microsoft's
+  `windows` crate, `sysinfo`, `winreg`, `steamlocate`, `ureq` with SChannel TLS, `self-replace`,
+  and `minisign-verify`.
+- Porting to Linux/SteamOS later is feasible.
 
-**For**
-- No dependencies: no runtime, no build step, no installer. The source you read is what runs,
-  which matters for something that runs elevated at every logon.
-- It's a small program (about 1,500 lines). The parts PowerShell can't do (performance counters,
-  P/Invoke, a custom popup window) are embedded C# compiled with `Add-Type`, so no language
-  boundary leaks into the design.
-- The pure logic (settings, argument building, game matching) can be unit-tested with Pester on
-  any OS, and CI does that.
+The cost was re-implementing the popup and the GPU counter reader in Win32, about 300 lines.
 
-**Against**
-- **Weight:** a hidden `powershell.exe` with WinForms uses roughly 100–150 MB of RAM, and
-  `Add-Type` compiles the C# with `csc` on every start, which slows startup by a few seconds.
-- **Everything runs on one UI thread.** The 5-second poll lists every process and reads each
-  one's `.Path` (a module lookup per process). The `/health` check can block for up to 700 ms,
-  and the menu doesn't respond during that time.
-- **It looks like malware to security software.** A hidden, elevated PowerShell process started by
-  a scheduled task, run with `-ExecutionPolicy Bypass` and compiling C# at runtime, matches
-  common malware heuristics. Some antivirus and EDR products will flag or block it, and the
-  scripts aren't signed.
-- The tray app itself is hard to test automatically (WinForms event loop, global state).
+## PowerShell edition (`src/`)
 
-**Revisit if** the project gets shared more widely (antivirus false positives and signing start
-to matter), grows much more UI, or background CPU becomes a concern. The natural next step is a
-small C# (.NET 8) tray app. The two hardest parts, `GpuWatch` and `LlmOsd`, are already C# and
-would move over unchanged. `install.ps1` would stay in PowerShell. Other languages (Rust, Go,
-AutoHotkey) would mean rewriting those parts for no clear benefit.
-
-**Alternatives considered for the LLM runtime:** Ollama and LM Studio have their own tray apps and
-can unload models, but neither has game-aware pausing. Running llama.cpp directly gives an exact
-choice of backend (Vulkan avoids the ROCm idle-power problem on RDNA3) and exact flags, and it's
-one fewer background service. The pause-while-gaming logic is what this project adds, and it
-could later drive another backend.
-
-## Known limitations and possible improvements
-
-- `llama-server` inherits the tray app's elevation, so an elevated network service is exposed to
-  your LAN when access is set to "Devices on my network". Set `ApiKey` in that case. A better fix
-  is to start it without admin rights (for example through a second, non-elevated scheduled task).
-- Replacing `Process.Path` with `QueryFullProcessImageName(PROCESS_QUERY_LIMITED_INFORMATION)`
-  would make polling cheaper. That call usually works across integrity levels, so it might remove
-  the need for elevation entirely. This needs testing with anti-cheat games.
-- `llama.cpp` defaults to the latest release, whose flags can change. Use
-  `install.ps1 -LlamaCppTag bNNNN` to pin a build you've tested.
+Same behaviour, as scripts: `install.ps1`/`uninstall.ps1`, and `llm-tray.ps1` run elevated at
+logon, with `llm-toggle.ps1` for the hotkey via a Start-menu shortcut and a flag file. It's
+covered by Pester tests and PSScriptAnalyzer in CI. Installing the Rust edition migrates it
+automatically: it removes the old task, scripts and shortcuts, and keeps settings and models.

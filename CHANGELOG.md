@@ -2,7 +2,39 @@
 
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
-[Semantic Versioning](https://semver.org/). The version lives in `$AppVersion` in `src/config.ps1`.
+[Semantic Versioning](https://semver.org/). The app version lives in `rust/Cargo.toml` (2.x); the PowerShell
+edition's in `$AppVersion` in `src/config.ps1` (1.x).
+
+## [2.0.0]
+
+A single self-installing app, written in Rust, replaces the PowerShell scripts. It keeps the
+same `C:\LLM` layout and settings, and installing it migrates the PowerShell edition
+automatically.
+
+### Added
+- `no-drama-llama.exe`: tray app, installer (`install`), uninstaller (`uninstall`, also in
+  Settings → Apps), updater (`update`). It installs to `C:\Program Files\No Drama Llama`.
+- **Auto-update** from GitHub Releases. It only installs newer releases signed with the
+  project's minisign key, and the signature must name that exact version. The update happens
+  without reloading the model.
+- Ctrl+Alt+L is now a real global hotkey handled by the app (no Start-menu shortcut or flag-file
+  hand-off).
+- Menu items: *Update automatically*, *Check for updates*. New setting: `AutoUpdate`.
+- Tests: unit and property tests for all logic, lifecycle simulations, compatibility with
+  PowerShell-edition files, and Windows integration tests, including an end-to-end run of the
+  worker against a fake llama-server.
+- CI/CD: fmt, clippy for Linux and Windows targets, tests on Linux and Windows, a release-build
+  smoke test and a dependency advisory check. A tag-triggered release builds, signs and
+  publishes. Dependabot keeps dependencies current.
+
+### Changed
+- The menu stays responsive: detection, health checks and server control run on a worker
+  thread.
+- Settings keys are matched case-insensitively, as PowerShell did.
+- `GpuVramGB` must be ≥ 0.1 and `GpuLoadPct` ≥ 1. Property testing found that tiny values
+  didn't round-trip, and they aren't meaningful anyway.
+- A missing model or llama.cpp now recovers on its own once the file is back.
+- Library paths with spaces inside quotes are cleaned up correctly (found by fuzzing).
 
 ## [1.1.0]
 

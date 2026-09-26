@@ -69,6 +69,13 @@ impl Procs {
             .collect()
     }
 
+    pub fn parent_of(&self, pid: u32) -> Option<u32> {
+        self.sys
+            .process(Pid::from_u32(pid))?
+            .parent()
+            .map(|p| p.as_u32())
+    }
+
     /// Kills the processes and waits (up to 5 s) for them to exit.
     pub fn kill(&mut self, pids: &[u32]) {
         for pid in pids {

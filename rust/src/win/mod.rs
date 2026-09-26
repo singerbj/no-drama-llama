@@ -43,19 +43,19 @@ pub fn main() -> i32 {
     let cmd = match cli::parse(std::env::args().skip(1)) {
         Ok(c) => c,
         Err(e) => {
-            sys::console(false);
+            let _ = sys::console(false);
             eprintln!("{e}");
             return 2;
         }
     };
     match cmd {
         Command::Help => {
-            sys::console(false);
+            let _ = sys::console(false);
             print!("{}", cli::HELP);
             0
         }
         Command::Version => {
-            sys::console(false);
+            let _ = sys::console(false);
             println!("no-drama-llama {}", env!("CARGO_PKG_VERSION"));
             0
         }
@@ -70,7 +70,7 @@ pub fn main() -> i32 {
                     }
                 };
             }
-            sys::console(true);
+            let own = sys::console(true);
             let opts = install::InstallOptions {
                 skip_model: a.skip_model,
                 skip_power: a.skip_power,
@@ -79,7 +79,7 @@ pub fn main() -> i32 {
                 update_llama: a.update_llama,
             };
             let code = console_result(install::install(&opts));
-            pause_if_own_console(true);
+            pause_if_own_console(own);
             code
         }
         Command::Uninstall { keep_models, yes } => {
@@ -93,13 +93,14 @@ pub fn main() -> i32 {
                     .map(|c| c as i32)
                     .unwrap_or(1);
             }
-            sys::console(true);
+            let own = sys::console(true);
             let code = console_result(install::uninstall(keep_models, yes));
-            pause_if_own_console(!yes);
+            pause_if_own_console(own && !yes);
+            install::delete_install_dir_after_exit();
             code
         }
         Command::Update => {
-            sys::console(true);
+            let own = sys::console(true);
             let r = (|| -> anyhow::Result<()> {
                 match updater::check()? {
                     None => println!(
@@ -123,7 +124,9 @@ pub fn main() -> i32 {
                 }
                 Ok(())
             })();
-            console_result(r)
+            let code = console_result(r);
+            pause_if_own_console(own);
+            code
         }
         Command::Default => {
             if running_installed_copy() && install::task_exists() {
