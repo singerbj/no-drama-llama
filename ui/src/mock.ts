@@ -30,6 +30,9 @@ const settings: Settings = {
   LayaPort: 11435,
   LayaDevice: "auto",
   LayaKeepAlive: "-1",
+  SendCrashReports: false,
+  ShareUsageStats: false,
+  PrivacyAsked: true,
 };
 
 export function mockApi(): Api {

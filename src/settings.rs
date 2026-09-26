@@ -137,6 +137,12 @@ pub struct Settings {
     pub laya_device: LayaDevice,
     /// Ollaya's `keep_alive` (`-1` = keep loaded, `5m`, `0` = unload after each request).
     pub laya_keep_alive: String,
+    /// Opt-in: send scrubbed crash reports to PostHog.
+    pub send_crash_reports: bool,
+    /// Opt-in: send anonymous usage events to PostHog.
+    pub share_usage_stats: bool,
+    /// The first-run privacy questions were answered; until then nothing is sent.
+    pub privacy_asked: bool,
 }
 
 impl Default for Settings {
@@ -166,6 +172,9 @@ impl Default for Settings {
             laya_port: laya::DEFAULT_PORT,
             laya_device: LayaDevice::Auto,
             laya_keep_alive: laya::DEFAULT_KEEP_ALIVE.into(),
+            send_crash_reports: false,
+            share_usage_stats: false,
+            privacy_asked: false,
         }
     }
 }
@@ -181,7 +190,7 @@ pub fn server_changed(a: &Settings, b: &Settings) -> bool {
 }
 
 /// Every key in settings.json, as written.
-pub const KEYS: [&str; 24] = [
+pub const KEYS: [&str; 27] = [
     "Model",
     "Reasoning",
     "Context",
@@ -206,6 +215,9 @@ pub const KEYS: [&str; 24] = [
     "LayaPort",
     "LayaDevice",
     "LayaKeepAlive",
+    "SendCrashReports",
+    "ShareUsageStats",
+    "PrivacyAsked",
 ];
 
 /// `Context` value meaning "as much as fits" (llama.cpp's --fit picks it).
@@ -337,6 +349,9 @@ impl Settings {
                 "AutoUpdate" => v.as_bool().map(|b| s.auto_update = b).is_some(),
                 "StartWithWindows" => v.as_bool().map(|b| s.start_with_windows = b).is_some(),
                 "RunLaya" => v.as_bool().map(|b| s.run_laya = b).is_some(),
+                "SendCrashReports" => v.as_bool().map(|b| s.send_crash_reports = b).is_some(),
+                "ShareUsageStats" => v.as_bool().map(|b| s.share_usage_stats = b).is_some(),
+                "PrivacyAsked" => v.as_bool().map(|b| s.privacy_asked = b).is_some(),
                 "LayaModel" => v
                     .as_str()
                     .filter(|m| laya::is_valid_model_name(m))
@@ -912,6 +927,9 @@ mod more_tests {
             laya_port: 12345,
             laya_device: LayaDevice::Cpu,
             laya_keep_alive: "30m".into(),
+            send_crash_reports: true,
+            share_usage_stats: true,
+            privacy_asked: true,
         };
         let (back, w) = Settings::from_json(&custom.to_json());
         assert!(w.is_empty(), "{w:?}");
@@ -947,6 +965,21 @@ mod more_tests {
             ("laya", 11435, LayaDevice::Auto)
         );
         assert_eq!(d.laya_keep_alive, "-1");
+        assert!(
+            !d.send_crash_reports && !d.share_usage_stats && !d.privacy_asked,
+            "analytics is opt-in"
+        );
+    }
+
+    #[test]
+    fn privacy_settings() {
+        for key in ["SendCrashReports", "ShareUsageStats", "PrivacyAsked"] {
+            let s = accepted(key, "true");
+            assert_ne!(s, Settings::default(), "{key}");
+            for bad in ["\"true\"", "1", "null"] {
+                rejected(key, bad);
+            }
+        }
     }
 
     #[test]

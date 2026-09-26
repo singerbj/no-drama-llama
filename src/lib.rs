@@ -17,4 +17,6 @@ pub mod state;
 pub mod update;
 
 #[cfg(windows)]
+pub mod posthog;
+#[cfg(windows)]
 pub mod win;

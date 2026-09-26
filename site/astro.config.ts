@@ -76,6 +76,7 @@ export default defineConfig({
             { label: 'Use it from other devices', slug: 'docs/guides/network' },
             { label: 'Always-on PC', slug: 'docs/guides/always-on' },
             { label: 'Updates', slug: 'docs/guides/updates' },
+            { label: 'Privacy', slug: 'docs/guides/privacy' },
             { label: 'Uninstall', slug: 'docs/guides/uninstall' },
           ],
         },

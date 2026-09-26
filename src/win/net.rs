@@ -37,6 +37,11 @@ pub fn health_agent() -> ureq::Agent {
     agent_with(Some(Duration::from_millis(700)))
 }
 
+/// For best-effort analytics: short, so a slow PostHog can't hold up exit or a panic report.
+pub fn telemetry_agent() -> ureq::Agent {
+    agent_with(Some(Duration::from_secs(5)))
+}
+
 /// A GET that, for an https URL, refuses to follow a redirect to plain http.
 fn get(agent: &ureq::Agent, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
     agent

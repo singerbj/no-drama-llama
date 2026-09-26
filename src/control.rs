@@ -313,15 +313,20 @@ mod tests {
         // A setting added to settings.rs must also get a field in the window and a type.
         let panels = include_str!("../ui/src/panels.tsx");
         let types = include_str!("../ui/src/types.ts");
+        // Bookkeeping, not a choice: set once the first-run privacy questions are answered.
+        let internal = ["PrivacyAsked"];
         for k in crate::settings::KEYS {
+            assert!(
+                types.contains(&format!("\n  {k}: ")),
+                "ui/src/types.ts: Settings needs {k}"
+            );
+            if internal.contains(&k) {
+                continue;
+            }
             assert_eq!(
                 panels.matches(&format!("k=\"{k}\"")).count(),
                 1,
                 "ui/src/panels.tsx needs one field with k=\"{k}\""
-            );
-            assert!(
-                types.contains(&format!("\n  {k}: ")),
-                "ui/src/types.ts: Settings needs {k}"
             );
         }
     }

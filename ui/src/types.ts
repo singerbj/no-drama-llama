@@ -34,6 +34,12 @@ export interface Settings {
   LayaDevice: LayaDevice;
   /** Ollaya keep_alive: "-1" = always loaded, "5m", "0" = unload after each request */
   LayaKeepAlive: string;
+  /** Opt-in: scrubbed crash reports to PostHog */
+  SendCrashReports: boolean;
+  /** Opt-in: anonymous usage events to PostHog */
+  ShareUsageStats: boolean;
+  /** The first-run privacy questions were answered */
+  PrivacyAsked: boolean;
 }
 
 export type SettingKey = keyof Settings;

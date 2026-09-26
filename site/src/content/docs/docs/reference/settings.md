@@ -38,6 +38,9 @@ Invalid values are ignored, and the default is used instead. Each one is logged 
 | `LayaPort` | `11435` | 1024 – 65535, not the same as `Port` |
 | `LayaDevice` | `auto` | `auto` · `cpu` · `cuda`. With `cpu`, Laya keeps running while you play. |
 | `LayaKeepAlive` | `-1` | How long the model stays loaded after a request: `-1` = always, a duration (`5m`, `1h30m`), a number of seconds, or `0` = unload right away |
+| `SendCrashReports` | `false` | `true` · `false`. Send scrubbed crash reports. See [Privacy](/docs/guides/privacy/). |
+| `ShareUsageStats` | `false` | `true` · `false`. Send anonymous usage statistics. See [Privacy](/docs/guides/privacy/). |
+| `PrivacyAsked` | `false` | `true` · `false`. Set once you've answered the first-run privacy questions. |
 
 ## Example
 

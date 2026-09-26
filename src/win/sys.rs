@@ -33,8 +33,8 @@ use windows::Win32::UI::Shell::{
     SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK, MB_YESNO,
-    SW_SHOWNORMAL,
+    MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK,
+    MB_YESNO, SW_SHOWNORMAL,
 };
 
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -263,6 +263,20 @@ pub fn ask(text: &str) -> bool {
             PCWSTR(t.as_ptr()),
             PCWSTR(c.as_ptr()),
             MB_YESNO | MB_ICONQUESTION,
+        ) == IDYES
+    }
+}
+
+/// A yes/no question asking for consent: No is the default button.
+pub fn consent(text: &str) -> bool {
+    let t = wide(text);
+    let c = wide(crate::paths::APP_NAME);
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(t.as_ptr()),
+            PCWSTR(c.as_ptr()),
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
         ) == IDYES
     }
 }

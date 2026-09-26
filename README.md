@@ -98,7 +98,7 @@ curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/jso
 - **Laya**: run Laya alongside the LLM, its model, port, device and how long it stays loaded, with
   its status and download progress
 - **Game detection**: every detection setting, `ExtraGames` and `GpuIgnore`
-- **App**: *Start with Windows*, *Update automatically*, popups, files and *Exit*
+- **App**: *Start with Windows*, *Update automatically*, privacy, popups, files and *Exit*
 
 Changes apply when you click **Save** (or press Ctrl+S). Changes to the model or server settings
 restart the server. The window uses the Microsoft Edge WebView2 Runtime, which Windows 10 and 11
@@ -143,6 +143,7 @@ hand, and changes apply within a few seconds. Invalid values are ignored and log
 | `Popups` / `PopupPosition` | `true` / `TopCenter` | `TopCenter` · `TopRight` · `BottomRight` · `BottomCenter` |
 | `AutoUpdate` | `true` | Install signed updates automatically |
 | `StartWithWindows` | `true` | Start the app when you sign in. When off, the Start menu entry still starts it. |
+| `SendCrashReports` / `ShareUsageStats` | `false` / `false` | Opt-in crash reports and anonymous usage statistics (see [Privacy](#privacy)) |
 
 ### Models
 
@@ -177,6 +178,20 @@ defaults.
 - **Automatic sign-in:** use [Sysinternals Autologon](https://learn.microsoft.com/sysinternals/downloads/autologon).
   After an automatic sign-in right after boot, the app locks the screen straight away.
 - **Wake-on-LAN:** the installer prints each wired adapter's MAC address for your WoL app.
+
+## Privacy
+
+Your prompts, chats, model output, files and settings never leave your PC. On first run the app
+asks, separately, whether to send **crash reports** and **anonymous usage statistics**. Both
+default to No, nothing is sent until you answer, and you can change them any time in
+*Settings → App → Privacy*.
+
+Crash reports carry the error and where it happened, with your user name, PC name and profile
+folder removed. Usage statistics are a short list of feature events (never settings values),
+the app version and your GPU model, with a random ID that turning them off deletes. Data goes
+to PostHog with IP addresses discarded. The full list is in the
+[privacy guide](https://singerbj.github.io/no-drama-llama/docs/guides/privacy/) and in
+[`src/posthog.rs`](src/posthog.rs).
 
 ## Uninstall
 

@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Opt-in crash reports and anonymous usage statistics** (off by default). On first run the
+  app asks two separate questions, both defaulting to No, and sends nothing until they're
+  answered. Crash reports have the user name, PC name and profile folder removed. Usage
+  statistics are a short list of feature events with a random install ID that's deleted when
+  they're turned off. See the [privacy guide](https://singerbj.github.io/no-drama-llama/docs/guides/privacy/).
+  - New settings `SendCrashReports`, `ShareUsageStats` and `PrivacyAsked`, and a **Privacy**
+    section on the settings window's **App** tab.
 - **Laya alongside the LLM** (optional, off by default). [Ollaya](https://ollaya.dev) serves
   Laya, a decision model that answers choice, score and yes/no questions about a text in one
   forward pass, on its own port (11435) with an Ollaya and TypeSafe-compatible API. The app

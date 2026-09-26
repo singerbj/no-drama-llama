@@ -120,6 +120,8 @@ struct Ui {
     icons: HashMap<Tone, Icon>,
     tone: Option<Tone>,
     settings_window: Host,
+    /// The first-run privacy questions were shown this run (the answer is saved async).
+    privacy_prompted: bool,
 }
 
 impl Ui {
@@ -198,6 +200,7 @@ fn build() -> Ui {
         .collect(),
         tone: None,
         settings_window: Host::default(),
+        privacy_prompted: false,
         menu: menu.clone(),
     };
     menu.add(&ui.status);
@@ -664,6 +667,7 @@ impl Ui {
             Request::Download { id } => {
                 // The window has already asked the user.
                 if catalog::find(&id).is_some() {
+                    crate::posthog::capture("model_download_requested");
                     let _ = tx.send(Cmd::DownloadModel { id, switch: true });
                 }
                 return;
@@ -678,6 +682,8 @@ impl Ui {
                 let _ = tx.send(Cmd::Edit(Box::new(move |s| {
                     *s = s.with_patch(&settings).0;
                 })));
+                crate::posthog::capture("settings_saved");
+                crate::posthog::settings_saved();
                 self.settings_window.saved(warnings);
                 return;
             }
@@ -690,8 +696,14 @@ impl Ui {
             let _ = tx.send(c);
         };
         match act {
-            Act::Toggle => send(Cmd::Toggle),
-            Act::Restart => send(Cmd::Restart),
+            Act::Toggle => {
+                crate::posthog::capture("llm_toggled");
+                send(Cmd::Toggle);
+            }
+            Act::Restart => {
+                crate::posthog::capture("server_restarted");
+                send(Cmd::Restart);
+            }
             Act::Edit(f) => send(Cmd::Edit(Box::new(move |s| f(s)))),
             Act::IgnoreGame => send(Cmd::IgnoreCurrentGame),
             Act::GpuReport => send(Cmd::ShowGpuReport),
@@ -702,7 +714,10 @@ impl Ui {
                     "https://github.com/{}/releases/latest",
                     paths::REPO
                 ))),
-                _ => send(Cmd::CheckForUpdates { manual: true }),
+                _ => {
+                    crate::posthog::capture("update_check_requested");
+                    send(Cmd::CheckForUpdates { manual: true });
+                }
             },
             Act::Exit => send(Cmd::Exit),
             Act::OpenChat => {
@@ -723,9 +738,18 @@ impl Ui {
             Act::OpenFolder => sys::open_unelevated(&p.root),
             Act::ViewLog => sys::open_in_notepad(&p.log),
             Act::OpenModels => sys::open_unelevated(&p.models_dir),
-            Act::CancelDownload => send(Cmd::CancelDownload),
-            Act::RestartLaya => send(Cmd::RestartLaya),
-            Act::UpdateLaya => send(Cmd::CheckLayaUpdate { manual: true }),
+            Act::CancelDownload => {
+                crate::posthog::capture("model_download_cancelled");
+                send(Cmd::CancelDownload);
+            }
+            Act::RestartLaya => {
+                crate::posthog::capture("laya_restarted");
+                send(Cmd::RestartLaya);
+            }
+            Act::UpdateLaya => {
+                crate::posthog::capture("laya_update_requested");
+                send(Cmd::CheckLayaUpdate { manual: true });
+            }
             Act::ViewLayaLog => sys::open_in_notepad(&p.laya_log),
             Act::Download(id) => {
                 if let Some(m) = catalog::find(&id) {
@@ -736,6 +760,7 @@ impl Ui {
                         self.snap.as_ref().map(|s| catalog::fit_note(&m, &s.pc)).unwrap_or("")
                     );
                     if sys::ask(&q) {
+                        crate::posthog::capture("model_download_requested");
                         send(Cmd::DownloadModel { id, switch: true });
                     }
                 }
@@ -770,6 +795,30 @@ fn lock_if_auto_signed_in_at_boot() {
             let _ = windows::Win32::System::Shutdown::LockWorkStation();
         }
     }
+}
+
+/// Asks once, on first run, whether to send crash reports and usage statistics. Both default
+/// to No, and nothing is sent until they're answered. Settings -> App changes them later.
+fn ask_privacy(tx: &Sender<Cmd>) {
+    const LATER: &str = "You can change this at any time in Settings -> App.";
+    let crash = sys::consent(&format!(
+        "Send crash reports?\n\n\
+         If No Drama Llama crashes, send the error message and the place in the code where it \
+         happened, so it can be fixed. Your user name, PC name and profile folder are removed \
+         first.\n\n{LATER}"
+    ));
+    let usage = sys::consent(&format!(
+        "Share anonymous usage statistics?\n\n\
+         Send which features you use (e.g. \"model download requested\"), the app version and \
+         your GPU model, with a random ID that isn't tied to you or your PC. Never your prompts, \
+         chats, settings values, files or IP address.\n\n{LATER}"
+    ));
+    log!("privacy choices: crash reports {crash}, usage statistics {usage}");
+    let _ = tx.send(Cmd::Edit(Box::new(move |s| {
+        s.send_crash_reports = crash;
+        s.share_usage_stats = usage;
+        s.privacy_asked = true;
+    })));
 }
 
 pub fn run(p: Paths, after_update: Option<String>) -> i32 {
@@ -818,6 +867,8 @@ pub fn run(p: Paths, after_update: Option<String>) -> i32 {
         }
     };
 
+    crate::posthog::init(&p.data_dir);
+
     let hotkeys = GlobalHotKeyManager::new().ok();
     let hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyL);
     if let Some(Err(e)) = hotkeys.as_ref().map(|m| m.register(hotkey)) {
@@ -850,6 +901,7 @@ pub fn run(p: Paths, after_update: Option<String>) -> i32 {
     }
     drop(tray);
     log!("tray exited");
+    crate::posthog::shutdown();
     if let Some(old) = relaunch {
         drop(_instance); // let the new version take over
         let _ = std::process::Command::new(paths::installed_exe())
@@ -898,7 +950,19 @@ fn pump(
     }
     while let Ok(m) = rx.try_recv() {
         match m {
-            UiMsg::State(s) => ui.render(tray, *s),
+            UiMsg::State(s) => {
+                let st = &s.settings;
+                crate::posthog::set_consent(
+                    st.send_crash_reports,
+                    st.share_usage_stats,
+                    s.gpu_name.as_deref(),
+                );
+                if !st.privacy_asked && !ui.privacy_prompted && crate::posthog::available() {
+                    ui.privacy_prompted = true;
+                    ask_privacy(tx);
+                }
+                ui.render(tray, *s)
+            }
             UiMsg::Popup(pp) => ui.popup(&pp.title, &pp.subtitle, pp.tone),
             UiMsg::Quit(r) => return Some(r),
         }

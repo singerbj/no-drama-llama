@@ -418,6 +418,18 @@ export function AppPanel() {
         <Toggle k="StartWithWindows" label="Start with Windows" hint="Start No Drama Llama when you sign in." />
         <Toggle k="AutoUpdate" label="Update automatically" hint="Installs signed releases from GitHub." />
       </Fieldset>
+      <Fieldset legend="Privacy">
+        <Toggle
+          k="SendCrashReports"
+          label="Send crash reports"
+          hint="The error and where in the code it happened, with your user name, PC name and profile folder removed."
+        />
+        <Toggle
+          k="ShareUsageStats"
+          label="Share anonymous usage statistics"
+          hint="Which features you use, the app version and your GPU model, with a random ID. Turning this off deletes the ID."
+        />
+      </Fieldset>
       <Fieldset legend="On-screen popups">
         <Toggle k="Popups" label="Show popups" hint="When the model pauses or resumes. They never take focus." />
         <Choice
