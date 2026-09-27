@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.0.2]
+
 ### Added
 - **Setup wizard.** Running the downloaded exe opens a branded, step-by-step installer instead
   of a console window: a system check (Windows version, GPU and driver, memory, disk space,
