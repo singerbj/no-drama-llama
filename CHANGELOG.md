@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.0.1]
+
 ### Added
 - **Opt-in crash reports and anonymous usage statistics** (off by default). On first run the
   app asks two separate questions, both defaulting to No, and sends nothing until they're
