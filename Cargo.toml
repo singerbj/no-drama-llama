@@ -1,6 +1,6 @@
 [package]
 name = "no-drama-llama"
-version = "2.0.0"
+version = "0.0.0"
 edition = "2021"
 rust-version = "1.95"
 description = "Always-on local LLM server for Windows gaming PCs that pauses while you play"

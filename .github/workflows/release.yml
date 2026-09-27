@@ -1,6 +1,6 @@
 name: Release
 
-# Push a tag like v2.0.0 (matching `version` in Cargo.toml) to publish:
+# Push a tag like v0.0.1 (matching `version` in Cargo.toml) to publish:
 #   no-drama-llama.exe          the app (installs itself when run), Authenticode-signed once SignPath is set up
 #   no-drama-llama.exe.minisig  minisign signature the in-app updater checks
 #   SHA256SUMS

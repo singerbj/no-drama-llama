@@ -54,7 +54,7 @@ const cargoLock = readFileSync('Cargo.lock', 'utf8').replace(/\r\n/g, '\n');
 if (!cargoLock.includes(lockEntry)) fail(`Cargo.lock has no no-drama-llama ${currentText} entry`);
 
 const changelog = readFileSync('CHANGELOG.md', 'utf8').replace(/\r\n/g, '\n');
-const unreleased = /^## \[Unreleased\]\n([\s\S]*?)(?=^## \[)/m.exec(changelog) ?? fail('no ## [Unreleased] section in CHANGELOG.md');
+const unreleased = /^## \[Unreleased\]\n([\s\S]*?)(?=^## \[|(?![\s\S]))/m.exec(changelog) ?? fail('no ## [Unreleased] section in CHANGELOG.md');
 if (!unreleased[1].trim()) fail('the CHANGELOG [Unreleased] section is empty: nothing to release');
 if (changelog.includes(`## [${version}]`)) fail(`CHANGELOG.md already has a ${version} section`);
 

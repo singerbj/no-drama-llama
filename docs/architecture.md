@@ -230,4 +230,4 @@ The cost was re-implementing the popup and the GPU counter reader in Win32, abou
 **Migration:** installing the app over the PowerShell edition removes its logon task, scripts
 and shortcuts, and moves its settings into `data\`. The `settings.json` keys, the `C:\LLM`
 layout and the settings backup format are unchanged, so models, settings and the original
-power settings carry over. The PowerShell code itself was removed from the repository in 2.0.0.
+power settings carry over. The PowerShell code itself was removed from the repository.
