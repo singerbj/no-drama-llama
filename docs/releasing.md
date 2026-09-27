@@ -43,15 +43,56 @@ The **Release** workflow then:
 1. checks that the tagged commit is on `main` and that the tag matches the crate version
 2. runs the tests
 3. builds the exe with the public key baked in
-4. waits for approval on the `release` environment, then signs it with trusted comment `no-drama-llama <version>`, verifies the signature, and writes
+4. has SignPath Authenticode-sign it, if that's set up (see below)
+5. waits for approval on the `release` environment, then signs it with trusted comment `no-drama-llama <version>`, verifies the signature, and writes
    `SHA256SUMS`
-5. publishes the release
+6. publishes the release
 
 Installed apps with *Update automatically* on pick it up within 24 hours. Users can also choose
 *Check for updates* in the tray menu or run `no-drama-llama.exe update`.
 
-## Code signing (recommended next step)
+## Optional setup: Windows code signing (SignPath Foundation)
 
-The exe isn't Authenticode-signed yet, so SmartScreen warns on first download. Add a signing
-step for `no-drama-llama.exe` to the `build` job, for example with Azure Trusted Signing. Sign
-before the minisign step, so the minisign signature covers the Authenticode-signed file.
+Without an Authenticode signature, SmartScreen shows "Windows protected your PC" on first run.
+[SignPath Foundation](https://signpath.org/) signs open-source projects for free. The release
+workflow's `codesign` job uses it once it's set up, and passes the exe through unsigned until
+then.
+
+1. [Apply to SignPath Foundation](https://signpath.org/apply). The README's
+   [Code signing policy](https://github.com/singerbj/no-drama-llama#code-signing-policy)
+   section covers what they ask the project to publish. Every GitHub account with write access
+   needs two-factor authentication.
+2. Once you're accepted, set up the project on [signpath.io](https://app.signpath.io):
+   - Install the [SignPath GitHub App](https://github.com/apps/signpath) on this repository
+     and link the predefined **GitHub.com** trusted build system to the project.
+   - Name the project `no-drama-llama`, or set the repository variable `SIGNPATH_PROJECT_SLUG`.
+   - Paste [`.signpath/artifact-configuration.xml`](../.signpath/artifact-configuration.xml)
+     into the project's artifact configuration and make it the default. It only signs
+     `no-drama-llama.exe` with product name *No Drama Llama* and the release's version.
+   - Use the `release-signing` signing policy (or set `SIGNPATH_SIGNING_POLICY_SLUG`), and
+     create an API token for a CI user who may submit to it.
+3. In the repository settings, add the variable `SIGNPATH_ORGANIZATION_ID` (from signpath.io),
+   then go to **Environments**, create `codesign`, and configure it:
+   - **Deployment branches and tags** → *Selected branches and tags* → add the tag rule `v*`.
+   - **Environment secrets** → `SIGNPATH_API_TOKEN`: the token from step 2.
+
+   It doesn't need required reviewers: SignPath asks a project approver to approve every
+   signing request, and the workflow waits up to two hours for that.
+
+With both set, each release goes like this:
+1. SignPath fetches the exe straight from the workflow run and signs it once you approve the
+   request on signpath.io.
+2. The `codesign` job checks the result:
+   - [`scripts/check-signed-exe.ts`](../scripts/check-signed-exe.ts) confirms it's the CI
+     build byte for byte, plus a signature.
+   - `Get-AuthenticodeSignature` confirms the signature is valid, timestamped, and from
+     SignPath Foundation.
+3. The `publish` job signs that file with minisign, so the updater's signature covers the
+   Authenticode-signed exe.
+
+If only one of `SIGNPATH_ORGANIZATION_ID` and `SIGNPATH_API_TOKEN` is set, the release fails
+instead of quietly shipping an unsigned exe.
+
+SmartScreen can still warn about the first few signed releases while the certificate builds
+reputation. After the first signed release, update the "Windows protected your PC" answers in
+the README, the troubleshooting and install pages, and the website FAQ.

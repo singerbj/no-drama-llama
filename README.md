@@ -193,6 +193,20 @@ to PostHog with IP addresses discarded. The full list is in the
 [privacy guide](https://singerbj.github.io/no-drama-llama/docs/guides/privacy/) and in
 [`src/posthog.rs`](src/posthog.rs).
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+
+- Only `no-drama-llama.exe` is signed. It's built from this repository by the
+  [Release workflow](.github/workflows/release.yml) on GitHub-hosted runners, never on a
+  developer's machine.
+- Committers and reviewers: [singerbj](https://github.com/singerbj)
+- Approvers: [singerbj](https://github.com/singerbj)
+- Privacy: see [Privacy](#privacy). The app sends nothing to other networked systems unless
+  you turn on crash reports or usage statistics, or use features that download llama.cpp,
+  models or updates.
+
 ## Uninstall
 
 Use **Settings → Apps → No Drama Llama → Uninstall**, or:
