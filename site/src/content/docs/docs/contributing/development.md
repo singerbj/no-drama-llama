@@ -70,7 +70,7 @@ or newer.
 ```sh
 cd site
 npm ci
-npm run dev       # http://localhost:4321/no-drama-llama/
+npm run dev       # http://localhost:4321/
 npm run build     # type-checks and builds to site/dist
 ```
 

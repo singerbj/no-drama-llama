@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/singerbj/no-drama-llama/actions/workflows/ci.yml/badge.svg)](https://github.com/singerbj/no-drama-llama/actions/workflows/ci.yml)
 
-**[Website](https://singerbj.github.io/no-drama-llama/) · [Docs](https://singerbj.github.io/no-drama-llama/docs/)**
+**[Website](https://nodramallama.benjaminjsinger.com/) · [Docs](https://nodramallama.benjaminjsinger.com/docs/)**
 
 Turns a Windows gaming PC into an always-on local LLM server that **gets out of the way when
 you play**. It runs [llama.cpp](https://github.com/ggml-org/llama.cpp) with a
@@ -190,7 +190,7 @@ Crash reports carry the error and where it happened, with your user name, PC nam
 folder removed. Usage statistics are a short list of feature events (never settings values),
 the app version and your GPU model, with a random ID that turning them off deletes. Data goes
 to PostHog with IP addresses discarded. The full list is in the
-[privacy guide](https://singerbj.github.io/no-drama-llama/docs/guides/privacy/) and in
+[privacy guide](https://nodramallama.benjaminjsinger.com/docs/guides/privacy/) and in
 [`src/posthog.rs`](src/posthog.rs).
 
 ## Code signing policy
