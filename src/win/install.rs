@@ -218,15 +218,33 @@ fn download_verified(asset: &crate::update::Asset, dest: &Path) -> Result<()> {
 /// Installs the llama.cpp build for `backend` (falling back to Vulkan if a CUDA build is
 /// missing from the release). Returns the backend actually installed.
 pub fn install_llama_cpp(p: &Paths, tag: Option<&str>, backend: Backend) -> Result<Backend> {
-    let api = match tag {
-        Some(t) => format!("https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{t}"),
-        None => "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest".into(),
+    const REPO_API: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases";
+    let agent = net::agent();
+    let rel = match tag {
+        Some(t) => Release::parse(&net::get_text(&agent, &format!("{REPO_API}/tags/{t}"))?)?,
+        None => {
+            // Not /releases/latest: llama.cpp's builds are pre-releases and its "latest"
+            // release carries no Windows zips.
+            let releases =
+                Release::parse_list(&net::get_text(&agent, &format!("{REPO_API}?per_page=30"))?)?;
+            let releases: Vec<Release> = releases.into_iter().filter(|r| !r.draft).collect();
+            let names: Vec<Vec<&str>> = releases
+                .iter()
+                .map(|r| r.assets.iter().map(|a| a.name.as_str()).collect())
+                .collect();
+            let Some(i) = hardware::pick_llama_release(&names, backend) else {
+                bail!(
+                    "no recent llama.cpp release has a Windows build for {} - try --llama-cpp-tag <tag>",
+                    backend.label()
+                );
+            };
+            releases.into_iter().nth(i).unwrap()
+        }
     };
-    let rel = Release::parse(&net::get_text(&net::agent(), &api)?)?;
     let names: Vec<&str> = rel.assets.iter().map(|a| a.name.as_str()).collect();
     let Some((used, main, runtime)) = hardware::llama_assets_with_fallback(&names, backend) else {
         bail!(
-            "llama.cpp {} has no Windows build for {} - try --llama-cpp-tag <older tag>",
+            "llama.cpp {} has no Windows build for {} - try --llama-cpp-tag <other tag>",
             rel.tag_name,
             backend.label()
         );

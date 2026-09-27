@@ -178,6 +178,23 @@ pub fn llama_assets_with_fallback<'a>(
         .find_map(|b| llama_assets(names, *b).map(|(m, c)| (*b, m, c)))
 }
 
+/// Which of `releases` (asset names, newest first) to install from: the newest with the
+/// backend's build, else the newest with a fallback build. llama.cpp ships its builds as
+/// pre-releases and keeps unrelated releases (no Windows zips) marked "latest", so the
+/// whole list has to be searched.
+pub fn pick_llama_release(releases: &[Vec<&str>], backend: Backend) -> Option<usize> {
+    let order: &[Backend] = match backend {
+        Backend::Cuda13 => &[Backend::Cuda13, Backend::Cuda12, Backend::Vulkan],
+        Backend::Cuda12 => &[Backend::Cuda12, Backend::Vulkan],
+        Backend::Vulkan => &[Backend::Vulkan],
+    };
+    order.iter().find_map(|b| {
+        releases
+            .iter()
+            .position(|names| llama_assets(names, *b).is_some())
+    })
+}
+
 /// Context size llama-server settled on, from its log (`n_ctx = 131072` / `n_ctx_seq ...`).
 pub fn parse_n_ctx(server_log: &str) -> Option<u32> {
     static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bn_ctx\s*=\s*(\d+)").unwrap());
@@ -380,6 +397,20 @@ Available devices:
             Backend::Vulkan
         );
         assert_eq!(llama_assets_with_fallback(&[], Backend::Vulkan), None);
+    }
+
+    #[test]
+    fn picks_the_newest_release_with_a_windows_build() {
+        let nightly = vec!["nightly-tag.txt"];
+        let vulkan_only = vec!["llama-b2-bin-win-vulkan-x64.zip"];
+        let all = ASSETS.to_vec();
+        let releases = vec![nightly.clone(), vulkan_only, all];
+        assert_eq!(pick_llama_release(&releases, Backend::Vulkan), Some(1));
+        // an older release with CUDA beats a newer one without it
+        assert_eq!(pick_llama_release(&releases, Backend::Cuda13), Some(2));
+        assert_eq!(pick_llama_release(&releases[..2], Backend::Cuda13), Some(1));
+        assert_eq!(pick_llama_release(&[nightly], Backend::Vulkan), None);
+        assert_eq!(pick_llama_release(&[], Backend::Vulkan), None);
     }
 
     #[test]
