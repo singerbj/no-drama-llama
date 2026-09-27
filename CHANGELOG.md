@@ -35,6 +35,9 @@ All notable changes to this project are documented here. The format follows
 - UI checks in CI: `better-npm-audit`, `oxfmt`, `oxlint` and `vitest` tests of the settings window.
 - `scripts/check.sh` runs every pull request check, and the pre-commit hook in `.githooks/` runs it
   before each commit (enabled by `npm ci` in `ui/`).
+- A **Prepare release** workflow cuts a release from the Actions tab: it bumps the version,
+  moves the changelog's [Unreleased] notes under it, commits to `main` and pushes the tag that
+  starts the Release workflow (see `docs/releasing.md`).
 - The project is licensed under the [MIT License](LICENSE).
 
 ### Changed

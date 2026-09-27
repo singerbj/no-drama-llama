@@ -1,0 +1,98 @@
+name: Prepare release
+
+# Run from the Actions tab (on main) to cut a release in one go. It:
+#   1. bumps `version` in Cargo.toml and Cargo.lock, and moves CHANGELOG's [Unreleased] notes
+#      under the new version (scripts/prepare-release.ts)
+#   2. commits that to main and pushes the tag vX.Y.Z in one atomic push
+#   3. the tag push starts the Release workflow, which builds, signs and publishes as usual
+#
+# It pushes with a GitHub App token, because the `v*` tag ruleset only lets administrators
+# create tags, and a tag pushed with GITHUB_TOKEN wouldn't start the Release workflow.
+# One-time setup (see docs/releasing.md):
+#   repository variable  RELEASE_APP_CLIENT_ID    the App's client ID
+#   environment secret   RELEASE_APP_PRIVATE_KEY  the App's private key, on the `release-prep` environment
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Exact version instead (X.Y.Z, overrides the bump)
+        type: string
+        required: false
+      dry-run:
+        description: Dry run (show the changes, push nothing)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    # Holds the App's private key. Give it required reviewers and restrict it to `main`.
+    environment: release-prep
+    steps:
+      - name: Must run on main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run this workflow on main, not $GITHUB_REF_NAME."
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master 2026-09
+        with:
+          toolchain: "1.98"
+      - name: Bump the version and roll the changelog
+        id: bump
+        env:
+          BUMP: ${{ inputs.version || inputs.bump }}
+        run: |
+          version=$(node scripts/prepare-release.ts "$BUMP")
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            echo "::error::Tag v$version already exists."
+            exit 1
+          fi
+          # The Release workflow builds with --locked, so catch a stale Cargo.lock here.
+          cargo metadata --locked --format-version 1 > /dev/null
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          git diff
+      - name: Generate an App token
+        if: ${{ !inputs.dry-run }}
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Commit, tag and push
+        if: ${{ !inputs.dry-run }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          bot="${APP_SLUG}[bot]"
+          id=$(gh api "/users/$bot" --jq .id)
+          git config user.name "$bot"
+          git config user.email "$id+$bot@users.noreply.github.com"
+          git commit -am "Release v$VERSION"
+          git tag "v$VERSION"
+          # Atomic: the tag is only created if main accepted the commit (it fails if main moved).
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
+          echo "Pushed v$VERSION. The Release workflow takes it from here: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/release.yml" >> "$GITHUB_STEP_SUMMARY"

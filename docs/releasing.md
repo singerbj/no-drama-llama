@@ -31,6 +31,45 @@ with.
 
 ## Cutting a release
 
+### From the Actions tab
+
+Once the one-time setup below is done, go to **Actions → Prepare release → Run workflow** on
+`main` and pick the bump (patch, minor or major) or type an exact version. After you approve the
+`release-prep` environment, it:
+1. bumps `version` in `Cargo.toml` and `Cargo.lock`
+   ([`scripts/prepare-release.ts`](../scripts/prepare-release.ts)) and moves the changelog's
+   `[Unreleased]` notes under the new version. It stops if `[Unreleased]` is empty.
+2. commits `Release vX.Y.Z` to `main` and pushes the tag `vX.Y.Z` in one atomic push, so the
+   tag is only created if `main` took the commit. If someone merged to `main` in the meantime,
+   the push fails and you can run it again.
+3. the tag starts the **Release** workflow below, with its usual approvals.
+
+Tick *Dry run* to see the version and diff without pushing anything.
+
+The same script works locally: `node scripts/prepare-release.ts minor`.
+
+#### One-time setup: the release App
+
+The workflow pushes with a GitHub App's token instead of `GITHUB_TOKEN`: only administrators
+may create `v*` tags, and a tag pushed with `GITHUB_TOKEN` wouldn't start the Release workflow.
+
+1. Create a GitHub App under **Settings → Developer settings → GitHub Apps → New GitHub App**
+   (for example *no-drama-llama-release*): no webhook, the repository permission
+   **Contents: Read and write** and nothing else, installable only on your account. Install it
+   on this repository only.
+2. Note its **Client ID** and generate a **private key**.
+3. In the repository settings:
+   - **Secrets and variables → Actions → Variables**: add `RELEASE_APP_CLIENT_ID`.
+   - **Environments**: create `release-prep`, then set **Deployment branches and tags** to the
+     branch `main`, **Required reviewers** to yourself, and the **environment secret**
+     `RELEASE_APP_PRIVATE_KEY` to the contents of the `.pem` file.
+   - **Rules → Rulesets**: add the App to the bypass list of the `v*` tag ruleset and of
+     whatever protects `main` (required pull requests, status checks), so it can push the
+     release commit and the tag.
+4. Delete the local `.pem` file.
+
+### By hand
+
 1. Bump `version` in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
 2. Add a `CHANGELOG.md` entry.
 3. Commit, then tag and push:
