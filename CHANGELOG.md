@@ -13,7 +13,7 @@ All notable changes to this project are documented here. The format follows
   app asks two separate questions, both defaulting to No, and sends nothing until they're
   answered. Crash reports have the user name, PC name and profile folder removed. Usage
   statistics are a short list of feature events with a random install ID that's deleted when
-  they're turned off. See the [privacy guide](https://singerbj.github.io/no-drama-llama/docs/guides/privacy/).
+  they're turned off. See the [privacy guide](https://nodramallama.benjaminjsinger.com/docs/guides/privacy/).
   - New settings `SendCrashReports`, `ShareUsageStats` and `PrivacyAsked`, and a **Privacy**
     section on the settings window's **App** tab.
 - **Laya alongside the LLM** (optional, off by default). [Ollaya](https://ollaya.dev) serves

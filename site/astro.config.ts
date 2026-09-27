@@ -3,11 +3,11 @@ import starlight from '@astrojs/starlight';
 import { satteri } from '@astrojs/markdown-satteri';
 import { baseLinks } from './src/plugins/base-links.ts';
 
-// GitHub Pages serves the site at https://<owner>.github.io/<repo>/. The Pages workflow passes
-// the real origin and base path, so a custom domain works without editing this file.
+// The site lives at the root of https://nodramallama.benjaminjsinger.com/ (a GitHub Pages custom
+// domain). The Pages workflow passes the real origin and base path; these are the local defaults.
 // An empty BASE_PATH means the site is at the root of its domain.
-const site = process.env.SITE_URL || 'https://singerbj.github.io';
-const base = process.env.BASE_PATH ?? '/no-drama-llama';
+const site = process.env.SITE_URL || 'https://nodramallama.benjaminjsinger.com';
+const base = process.env.BASE_PATH ?? '';
 
 export default defineConfig({
   site,
