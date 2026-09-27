@@ -79,7 +79,8 @@ pub fn parse_nvidia_smi(output: &str) -> Vec<NvidiaGpu> {
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Backend {
     /// AMD, Intel, anything with a Vulkan driver (and NVIDIA as a fallback)
     Vulkan,
@@ -119,15 +120,21 @@ impl Backend {
 /// Best llama.cpp build for this PC. CUDA is faster than Vulkan on NVIDIA, if the driver and
 /// card are new enough; AMD stays on Vulkan (avoids ROCm's idle-power problem on RDNA3).
 pub fn choose_backend(nvidia: &[NvidiaGpu]) -> Backend {
+    [Backend::Cuda13, Backend::Cuda12]
+        .into_iter()
+        .find(|b| backend_supported(*b, nvidia))
+        .unwrap_or(Backend::Vulkan)
+}
+
+/// Whether this PC's biggest NVIDIA card and its driver can run `backend`'s build.
+pub fn backend_supported(backend: Backend, nvidia: &[NvidiaGpu]) -> bool {
     let Some(best) = nvidia.iter().max_by_key(|g| g.memory_mib) else {
-        return Backend::Vulkan;
+        return backend == Backend::Vulkan;
     };
-    if best.driver_major >= 580 && best.compute_cap >= 7.5 {
-        Backend::Cuda13
-    } else if best.driver_major >= 528 && best.compute_cap >= 6.0 {
-        Backend::Cuda12
-    } else {
-        Backend::Vulkan
+    match backend {
+        Backend::Vulkan => true,
+        Backend::Cuda12 => best.driver_major >= 528 && best.compute_cap >= 6.0,
+        Backend::Cuda13 => best.driver_major >= 580 && best.compute_cap >= 7.5,
     }
 }
 
@@ -176,6 +183,23 @@ pub fn llama_assets_with_fallback<'a>(
     order
         .iter()
         .find_map(|b| llama_assets(names, *b).map(|(m, c)| (*b, m, c)))
+}
+
+/// Which of `releases` (asset names, newest first) to install from: the newest with the
+/// backend's build, else the newest with a fallback build. llama.cpp ships its builds as
+/// pre-releases and keeps unrelated releases (no Windows zips) marked "latest", so the
+/// whole list has to be searched.
+pub fn pick_llama_release(releases: &[Vec<&str>], backend: Backend) -> Option<usize> {
+    let order: &[Backend] = match backend {
+        Backend::Cuda13 => &[Backend::Cuda13, Backend::Cuda12, Backend::Vulkan],
+        Backend::Cuda12 => &[Backend::Cuda12, Backend::Vulkan],
+        Backend::Vulkan => &[Backend::Vulkan],
+    };
+    order.iter().find_map(|b| {
+        releases
+            .iter()
+            .position(|names| llama_assets(names, *b).is_some())
+    })
 }
 
 /// Context size llama-server settled on, from its log (`n_ctx = 131072` / `n_ctx_seq ...`).
@@ -380,6 +404,20 @@ Available devices:
             Backend::Vulkan
         );
         assert_eq!(llama_assets_with_fallback(&[], Backend::Vulkan), None);
+    }
+
+    #[test]
+    fn picks_the_newest_release_with_a_windows_build() {
+        let nightly = vec!["nightly-tag.txt"];
+        let vulkan_only = vec!["llama-b2-bin-win-vulkan-x64.zip"];
+        let all = ASSETS.to_vec();
+        let releases = vec![nightly.clone(), vulkan_only, all];
+        assert_eq!(pick_llama_release(&releases, Backend::Vulkan), Some(1));
+        // an older release with CUDA beats a newer one without it
+        assert_eq!(pick_llama_release(&releases, Backend::Cuda13), Some(2));
+        assert_eq!(pick_llama_release(&releases[..2], Backend::Cuda13), Some(1));
+        assert_eq!(pick_llama_release(&[nightly], Backend::Vulkan), None);
+        assert_eq!(pick_llama_release(&[], Backend::Vulkan), None);
     }
 
     #[test]

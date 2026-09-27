@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Requirements, installing No Drama Llama, and installer options.
+description: Requirements, the setup wizard, and installer options.
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
@@ -20,14 +20,26 @@ import { Aside, Steps } from '@astrojs/starlight/components';
 1. Download `no-drama-llama.exe` from the
    [latest release](https://github.com/singerbj/no-drama-llama/releases/latest).
 
-2. Run it, choose **Yes** to install, and approve the administrator prompt.
+2. Run it and approve the administrator prompt. The setup wizard opens.
 
-3. Wait for the console window to finish. The installer:
-   - detects your GPU and installs the matching llama.cpp build: CUDA on NVIDIA, Vulkan on AMD
-     and Intel
-   - measures the GPU's memory and downloads the best model for it
+3. **System check.** Setup checks the Windows version, GPU and driver, memory, free disk space,
+   the connection to GitHub and Hugging Face, the `C:\LLM` folder and the API port. A red item
+   stops the install and says how to fix it; *Check again* runs the checks again. Yellow items
+   are advice, like updating an old NVIDIA driver.
 
-4. The tray icon appears and the model starts loading. The icon turns green when it's ready.
+4. **Model.** The models that fit your GPU are listed, with the best one selected. Green fits
+   entirely on the GPU, which is fastest. On an upgrade you can keep your current model, and you
+   can also install without one.
+
+5. **Options.** The llama.cpp build is picked for your GPU (CUDA on NVIDIA, Vulkan on AMD and
+   Intel). Always-on power settings, Wake-on-LAN and *Start with Windows* are on by default
+   (the power settings are off on laptops). Laya is off.
+
+6. **Review and install.** The summary shows the download size and the disk space needed.
+   *Install* shows each step and the download progress, and *Stop* pauses it (downloads resume
+   next time).
+
+7. The tray icon appears and the model starts loading. The icon turns green when it's ready.
 
 </Steps>
 
@@ -51,7 +63,8 @@ verifies every update against the project's signing key.
 
 ## Installer options
 
-Run these from a terminal in the folder with the exe:
+For scripted installs, `install` does the same as the wizard without a window. Run these from
+a terminal in the folder with the exe:
 
 ```powershell
 .\no-drama-llama.exe models                          # what fits this PC

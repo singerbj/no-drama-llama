@@ -25,9 +25,9 @@ export async function cleanup() {
   mounted = [];
 }
 
-/** Waits (up to 2 s) for `check` to stop throwing, letting React and timers run. */
-export async function waitFor<T>(check: () => T): Promise<T> {
-  const end = Date.now() + 2000;
+/** Waits (up to `ms`, 2 s by default) for `check` to stop throwing, letting React and timers run. */
+export async function waitFor<T>(check: () => T, ms = 2000): Promise<T> {
+  const end = Date.now() + ms;
   for (;;) {
     try {
       return check();

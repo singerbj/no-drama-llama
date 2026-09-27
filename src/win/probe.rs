@@ -54,6 +54,41 @@ pub fn server_caps(server_exe: &Path) -> ServerCaps {
     }
 }
 
+/// GPUs as DirectX lists them, with their dedicated memory: works for any vendor, before
+/// llama.cpp is installed. Software adapters (Microsoft Basic Render Driver) are skipped.
+pub fn dxgi_adapters() -> Vec<Device> {
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
+    };
+    let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for i in 0.. {
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else {
+            break;
+        };
+        let Ok(d) = (unsafe { adapter.GetDesc1() }) else {
+            continue;
+        };
+        if d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+            continue;
+        }
+        let len = d
+            .Description
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(d.Description.len());
+        out.push(Device {
+            id: format!("DXGI{i}"),
+            description: String::from_utf16_lossy(&d.Description[..len]),
+            total_bytes: d.DedicatedVideoMemory as u64,
+            free_bytes: 0,
+        });
+    }
+    out
+}
+
 pub fn total_ram() -> u64 {
     let mut s = sysinfo::System::new();
     s.refresh_memory();
@@ -61,10 +96,18 @@ pub fn total_ram() -> u64 {
 }
 
 /// What this PC offers for models: primary GPU memory + RAM. Uses llama.cpp's own device list
-/// when it's installed, else nvidia-smi.
+/// when it's installed, else nvidia-smi, else DirectX.
 pub fn machine(server_exe: &Path) -> (Machine, Option<String>) {
+    machine_with(server_exe, &nvidia_gpus())
+}
+
+/// [`machine`] with nvidia-smi's answer already in hand.
+pub fn machine_with(server_exe: &Path, nvidia: &[NvidiaGpu]) -> (Machine, Option<String>) {
     let ram = total_ram();
-    let devs = devices(server_exe);
+    let mut devs = devices(server_exe);
+    if devs.is_empty() && nvidia.is_empty() {
+        devs = dxgi_adapters();
+    }
     if let Some(d) = hardware::primary_device(&devs) {
         let vram = if hardware::is_integrated(&d.description) {
             0
@@ -80,7 +123,7 @@ pub fn machine(server_exe: &Path) -> (Machine, Option<String>) {
             )),
         );
     }
-    if let Some(g) = nvidia_gpus().into_iter().max_by_key(|g| g.memory_mib) {
+    if let Some(g) = nvidia.iter().max_by_key(|g| g.memory_mib) {
         return (
             Machine {
                 vram: g.memory_mib * 1024 * 1024,

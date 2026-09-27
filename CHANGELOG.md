@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Setup wizard.** Running the downloaded exe opens a branded, step-by-step installer instead
+  of a console window: a system check (Windows version, GPU and driver, memory, disk space,
+  GitHub and Hugging Face, the `C:\LLM` folder, the API port, laptop or desktop), a model picker
+  with the best fit selected, options (llama.cpp build, always-on power, Wake-on-LAN, start with
+  Windows, Laya, privacy), a review with download and disk sizes, and step-by-step progress with
+  download speed, time left and a *Stop* button. Failures show the reason with *Try again*, and
+  a `setup.log` in `C:\LLM\data`.
+- **Uninstall wizard.** *Settings → Apps → Uninstall* opens a matching wizard that asks whether
+  to keep your models and to turn off automatic sign-in.
+- `setup` and `setup --uninstall` commands. `install` and `uninstall` stay for scripts.
+- The GPU and its memory are read through DirectX before llama.cpp is installed, so AMD and
+  Intel PCs get a model recommendation on the first install too.
+- The Apps & features entry has an install date, size, help link and a quiet uninstall command.
+
+### Fixed
+- Installing failed with "llama.cpp has no Windows build for Vulkan": llama.cpp now publishes
+  its builds as pre-releases, and its "latest" release carries no Windows files. The installer
+  now picks the newest release that has a build for your GPU.
+
 ## [0.0.1]
 
 ### Added

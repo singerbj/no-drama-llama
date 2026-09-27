@@ -7,6 +7,7 @@ pub mod cli;
 pub mod control;
 pub mod detect;
 pub mod hardware;
+pub mod installer;
 pub mod laya;
 pub mod log;
 pub mod paths;

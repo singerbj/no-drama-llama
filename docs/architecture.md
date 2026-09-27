@@ -16,6 +16,7 @@ edition are migrated automatically.
 | `hardware.rs` | any | `--list-devices` / `nvidia-smi` parsing, backend choice, llama.cpp asset selection, context from the log |
 | `catalog.rs` | any | Downloadable models, how well each fits this PC, the recommendation |
 | `laya.rs` | any | Laya via Ollaya: settings values, the daemon's environment, release assets and checksums, pull progress, Laya's state machine |
+| `installer.rs` | any | The setup wizard's decisions: system checks, which llama.cpp builds this PC can run, disk needed, validation, steps, and the wizard ↔ installer messages |
 | `setup.rs` | any | Install/uninstall logic: task XML, settings backup and restore, `powercfg` parsing, PowerShell-edition migration |
 | `cli.rs` | any | Command-line parsing |
 | `control.rs` | any | Messages between the tray and the settings window |
@@ -27,7 +28,9 @@ edition are migrated automatically.
 | `win/gpu.rs` | Windows | Per-process GPU counters (PDH), full-screen check |
 | `win/libraries.rs` | Windows | Reads each launcher's records to find game folders |
 | `win/procs.rs` | Windows | Process list and exe paths (sysinfo) |
-| `win/install.rs` | Windows | `install` / `uninstall` subcommands |
+| `win/install.rs` | Windows | Install and uninstall, reporting to the wizard or a console (`install` / `uninstall` commands) |
+| `win/setup_app.rs` | Windows | The setup and uninstall wizard: a Tauri app (`setup`) that shows `ui/setup.html` and runs the install on a thread |
+| `win/survey.rs` | Windows | Gathers what the wizard shows: hardware, disk, what's installed, llama.cpp release sizes, the checks |
 | `win/probe.rs` | Windows | Runs `nvidia-smi`, `llama-server --list-devices` / `--help` (with timeouts); reads RAM |
 | `win/models.rs` | Windows | Hugging Face model downloads: resumable, verified, cancellable, multi-part |
 | `win/laya.rs` | Windows | Installs Ollaya from its GitHub releases, starts `ollaya serve`, pulls and loads the model over its API |
@@ -78,6 +81,42 @@ exe.
   checks that. The field components in `ui/src/fields.tsx` only accept keys whose type matches
   (`Toggle` takes boolean settings, `NumberField` numeric ones, and so on), and `ui/src/types.ts`
   mirrors `Settings`.
+
+## Setup wizard
+
+Running the downloaded exe (no arguments, not installed yet) asks for administrator rights and
+opens the setup wizard: the same exe with `setup`, a Tauri window showing `ui/setup.html`
+(React, like the settings window; both pages are one Vite build embedded once).
+
+```
+ page (ui/src/setup/)              setup_app (elevated)                  install.rs
+ ────────────────────              ────────────────────                  ──────────
+ survey()  ─────────────────────►  survey.rs: probes run side by side
+           ◄── Survey ───────────  (nvidia-smi, DXGI, GitHub, Hugging Face, disk, registry)
+ review(plan) ──────────────────►  installer::validate / sizes / planned_steps
+ install(plan) ─────────────────►  thread: install(opts, &mut Page) ───► Reporter::step/info/progress
+           ◄── "progress" events ──────────────────────────────────────  (Step, Log, Bytes, Finished)
+ cancel() ──────────────────────►  cancel flag: checked at every step; downloads stop and resume later
+```
+
+- **One install path.** The wizard and the `install` command run the same `install::install`;
+  only the [`Reporter`](../src/installer.rs) differs (events to the page vs. lines in a console).
+  The plan becomes `InstallOptions`; choices that live in `settings.json` (start with Windows,
+  Laya, privacy) are written once `C:\LLM` is admin-only.
+- **Checks** are decided in `installer.rs` (unit-tested) from facts `survey.rs` collects. A
+  *fail* (Windows older than 1809, not enough disk for the app and llama.cpp, no GitHub without
+  llama.cpp installed, `C:\LLM` being a link) blocks *Next*; a *warn* explains and lets you on.
+  The install command re-validates the plan, so the page can't skip a check.
+- **Before llama.cpp exists**, the GPU and its memory come from nvidia-smi or, for AMD and
+  Intel, DXGI, so the model recommendation works on a first install.
+- **Security.** The window is elevated, so WebView2's profile lives in an admin-only folder
+  (`%ProgramFiles%\No Drama Llama\setup-webview2`, removed after exit) instead of
+  `%LOCALAPPDATA%`. The page only reaches its own commands, and nothing listens on a port.
+- **Closing** mid-install asks first; stopping keeps finished and partial downloads.
+- `setup.log` (in `C:\LLM\data`) keeps each run's steps and errors.
+- **Uninstall:** Apps & features runs `setup --uninstall`, which opens the same window in
+  uninstall mode (keep models? turn off automatic sign-in?). `QuietUninstallString` is
+  `uninstall --yes` for scripts.
 
 ## Start with Windows
 

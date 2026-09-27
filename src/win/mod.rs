@@ -11,12 +11,15 @@ pub mod probe;
 pub mod procs;
 pub mod settings_app;
 pub mod settings_host;
+pub mod setup_app;
+pub mod survey;
 pub mod sys;
 pub mod tray;
 pub mod updater;
 pub mod worker;
 
 use crate::cli::{self, Command};
+use crate::installer::UninstallPlan;
 use crate::paths::{self, Paths};
 
 fn console_result(r: anyhow::Result<()>) -> i32 {
@@ -96,6 +99,7 @@ pub fn main() -> i32 {
         }
         Command::Run { after_update } => tray::run(Paths::system(), after_update),
         Command::SettingsWindow => settings_app::run(),
+        Command::Setup { uninstall } => open_setup(uninstall),
         Command::Install(a) => {
             if !sys::is_elevated() {
                 return match sys::run_elevated(&cli::install_args_string(&a), true) {
@@ -113,14 +117,28 @@ pub fn main() -> i32 {
                 skip_wol: a.skip_wol,
                 llama_tag: a.llama_tag,
                 update_llama: a.update_llama,
-                laya: a.laya,
+                laya: a.laya.then_some(true),
                 model: a.model,
                 backend: a
                     .backend
                     .as_deref()
                     .and_then(crate::hardware::Backend::parse),
+                ..Default::default()
             };
-            let code = console_result(install::install(&opts));
+            let r = install::install(&opts, &mut install::Console::default()).map(|done| {
+                println!(
+                    "\nDone. Look for the dot in the system tray (click ^ if hidden, drag it onto the taskbar to pin).\n\
+                     Chat + OpenAI-compatible API: {}   Hotkey: Ctrl+Alt+L   Log: {}\n\
+                     Uninstall from Settings > Apps, or: \"{}\" uninstall",
+                    done.chat_url,
+                    done.log.display(),
+                    done.exe.display()
+                );
+                if let Some(url) = done.laya_url {
+                    println!("Laya (Ollaya API): {url}");
+                }
+            });
+            let code = console_result(r);
             pause_if_own_console(own);
             code
         }
@@ -136,7 +154,24 @@ pub fn main() -> i32 {
                     .unwrap_or(1);
             }
             let own = sys::console(true);
-            let code = console_result(install::uninstall(keep_models, yes));
+            let r = (|| -> anyhow::Result<()> {
+                if !yes && !install::prompt(
+                    "Remove No Drama Llama, llama.cpp, your settings and (unless --keep-models) the models?",
+                    false,
+                ) {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+                let plan = UninstallPlan {
+                    keep_models,
+                    disable_auto_sign_in: install::auto_sign_in()
+                        && (yes || install::prompt("Automatic sign-in is on. Turn it off?", true)),
+                };
+                install::uninstall(&plan, &mut install::Console::default())?;
+                println!("\nDone. {}", install::BIOS_NOTE);
+                Ok(())
+            })();
+            let code = console_result(r);
             pause_if_own_console(own && !yes);
             install::delete_install_dir_after_exit();
             code
@@ -184,28 +219,30 @@ pub fn main() -> i32 {
                     }
                 };
             }
-            let installed = paths::installed_exe().exists();
-            let q = if installed {
-                format!(
-                    "No Drama Llama is already installed.\n\nInstall this copy (version {}) over it?",
-                    env!("CARGO_PKG_VERSION")
-                )
-            } else {
-                "Install No Drama Llama?\n\nIt downloads llama.cpp and the Qwen 3.8 27B model (17.6 GB), sets up \
-                 low-power always-on settings and Wake-on-LAN (undone by uninstall), and starts with Windows.\n\n\
-                 Windows will ask for administrator rights."
-                    .to_string()
-            };
-            if !sys::ask(&q) {
-                return 0;
-            }
-            match sys::run_elevated("install", false) {
-                Ok(_) => 0,
-                Err(e) => {
-                    sys::message(&format!("Install needs administrator rights: {e}"), true);
-                    1
-                }
-            }
+            open_setup(false)
+        }
+    }
+}
+
+/// The setup (or uninstall) wizard, elevated: it asks for administrator rights first.
+fn open_setup(uninstall: bool) -> i32 {
+    if sys::is_elevated() {
+        return setup_app::run(uninstall);
+    }
+    let args = if uninstall {
+        "setup --uninstall"
+    } else {
+        "setup"
+    };
+    // Settings > Apps waits for an uninstall to finish before it refreshes the list.
+    match sys::run_elevated(args, uninstall) {
+        Ok(code) => code as i32,
+        Err(e) => {
+            sys::message(
+                &format!("Setting up No Drama Llama needs administrator rights: {e}"),
+                true,
+            );
+            1
         }
     }
 }

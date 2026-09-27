@@ -1,9 +1,11 @@
-//! `install` / `uninstall`: everything the PowerShell edition's install.ps1 / uninstall.ps1
-//! did, plus migrating from it. Runs elevated in a console window.
+//! Install and uninstall: everything the PowerShell edition's install.ps1 / uninstall.ps1
+//! did, plus migrating from it. Runs elevated, driven by the setup wizard (`setup_app`) or by
+//! the `install` / `uninstall` commands in a console; a [`Reporter`] shows the progress.
 
 use super::{laya as win_laya, models, net, probe, procs::Procs, sys};
 use crate::catalog::{self, CatalogModel};
 use crate::hardware::{self, Backend};
+use crate::installer::{Reporter, StepId, UninstallPlan, CANCELLED};
 use crate::paths::{self, Paths, APP_NAME, TASK_NAME};
 use crate::settings::Settings;
 use crate::setup;
@@ -13,6 +15,8 @@ use serde_json::Value;
 use std::io::Write;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_ALL_ACCESS};
 use winreg::RegKey;
 
@@ -30,12 +34,58 @@ pub struct InstallOptions {
     pub skip_wol: bool,
     pub llama_tag: Option<String>,
     pub update_llama: bool,
-    /// Turn on Laya (Ollaya) and install it now
-    pub laya: bool,
+    /// Some(true): turn on Laya (Ollaya) and install it now; Some(false): turn it off
+    pub laya: Option<bool>,
+    /// Start at sign-in (None = keep the current setting)
+    pub start_with_windows: Option<bool>,
+    /// (crash reports, usage stats), answering the first-run privacy question
+    pub privacy: Option<(bool, bool)>,
 }
 
-fn step(msg: &str) {
-    println!("\n== {msg}");
+/// Prints the progress in a console (`install` / `uninstall` run from a terminal).
+#[derive(Default)]
+pub struct Console {
+    cancel: Arc<AtomicBool>,
+    /// A progress line is showing, without a newline yet
+    mid_line: bool,
+}
+
+impl Console {
+    fn end_line(&mut self) {
+        if std::mem::take(&mut self.mid_line) {
+            println!();
+        }
+    }
+}
+
+impl Reporter for Console {
+    fn step(&mut self, id: StepId) {
+        self.end_line();
+        println!("\n== {}", id.label());
+    }
+
+    fn info(&mut self, text: &str) {
+        self.end_line();
+        println!("  {text}");
+    }
+
+    fn progress(&mut self, done: u64, total: u64) {
+        self.mid_line = true;
+        print_progress(done, total);
+    }
+
+    fn cancel_flag(&self) -> Arc<AtomicBool> {
+        self.cancel.clone()
+    }
+}
+
+/// Starts a step, unless the user cancelled.
+fn begin(r: &mut dyn Reporter, id: StepId) -> Result<()> {
+    if r.cancel_flag().load(Ordering::Relaxed) {
+        bail!(CANCELLED);
+    }
+    r.step(id);
+    Ok(())
 }
 
 fn programs_dir() -> PathBuf {
@@ -79,12 +129,12 @@ pub fn stop_running(p: &Paths) {
     procs.kill(&pids);
 }
 
-fn migrate_from_powershell(p: &Paths) {
+fn migrate_from_powershell(p: &Paths, r: &mut dyn Reporter) {
     if sys::run("schtasks.exe", &["/delete", "/tn", OLD_TASK, "/f"]).is_ok() {
-        println!("Removed the PowerShell edition's logon task.");
+        r.info("Removed the PowerShell edition's logon task.");
     }
     for d in setup::migrate_legacy_layout(p) {
-        println!("  {d}");
+        r.info(&d);
     }
     for f in setup::LEGACY_SHORTCUTS {
         remove_shortcut(&programs_dir().join(f));
@@ -98,7 +148,7 @@ const ROOT_SDDL: &str = "O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200
 /// Makes sure C:\LLM is a real folder that only administrators control, before anything is
 /// put in it. Returns true if it already existed with some other owner: that owner could
 /// have changed anything inside, so its programs mustn't be trusted (see [`install`]).
-fn secure_root(p: &Paths) -> Result<bool> {
+pub(crate) fn secure_root(p: &Paths) -> Result<bool> {
     if sys::is_reparse_point(&p.root) {
         bail!(
             "{} is a link to another folder. Delete it and run the installer again.",
@@ -187,10 +237,19 @@ pub fn installed_backend(p: &Paths) -> Option<Backend> {
         .and_then(|s| Backend::parse(&s))
 }
 
-fn download_verified(asset: &crate::update::Asset, dest: &Path) -> Result<()> {
+fn download_verified(
+    asset: &crate::update::Asset,
+    dest: &Path,
+    r: &mut dyn Reporter,
+) -> Result<()> {
     let _ = std::fs::remove_file(dest);
-    net::download(&asset.browser_download_url, dest, print_progress)?;
-    println!();
+    let cancel = r.cancel_flag();
+    net::download_cancellable(
+        &asset.browser_download_url,
+        dest,
+        |d, t| r.progress(d, t),
+        Some(&cancel),
+    )?;
     // The elevated app runs what's in this zip, so an unverifiable one is refused.
     let Some(expected) = asset
         .digest
@@ -211,46 +270,85 @@ fn download_verified(asset: &crate::update::Asset, dest: &Path) -> Result<()> {
             asset.name
         );
     }
-    println!("  SHA-256 verified.");
+    r.info("SHA-256 verified.");
     Ok(())
+}
+
+const LLAMA_RELEASES: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases";
+
+/// llama.cpp's recent releases, newest first. Not /releases/latest: its builds are
+/// pre-releases, and its "latest" release carries no Windows zips.
+pub fn llama_releases() -> Result<Vec<Release>> {
+    let releases = Release::parse_list(&net::get_text(
+        &net::agent(),
+        &format!("{LLAMA_RELEASES}?per_page=30"),
+    )?)?;
+    Ok(releases.into_iter().filter(|r| !r.draft).collect())
+}
+
+/// The newest release in `releases` with a build for `backend` (or a fallback build).
+pub fn pick_llama_release(releases: Vec<Release>, backend: Backend) -> Option<Release> {
+    let names: Vec<Vec<&str>> = releases
+        .iter()
+        .map(|r| r.assets.iter().map(|a| a.name.as_str()).collect())
+        .collect();
+    let i = hardware::pick_llama_release(&names, backend)?;
+    releases.into_iter().nth(i)
+}
+
+/// Download size of `backend`'s build (with the CUDA runtime) in `release`.
+pub fn llama_download_size(release: &Release, backend: Backend) -> Option<u64> {
+    let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
+    let (main, runtime) = hardware::llama_assets(&names, backend)?;
+    let size = |n: &str| release.asset(n).map_or(0, |a| a.size);
+    Some(size(main) + runtime.map_or(0, size))
 }
 
 /// Installs the llama.cpp build for `backend` (falling back to Vulkan if a CUDA build is
 /// missing from the release). Returns the backend actually installed.
-pub fn install_llama_cpp(p: &Paths, tag: Option<&str>, backend: Backend) -> Result<Backend> {
-    let api = match tag {
-        Some(t) => format!("https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{t}"),
-        None => "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest".into(),
+pub fn install_llama_cpp(
+    p: &Paths,
+    tag: Option<&str>,
+    backend: Backend,
+    r: &mut dyn Reporter,
+) -> Result<Backend> {
+    let rel = match tag {
+        Some(t) => Release::parse(&net::get_text(&net::agent(), &format!("{LLAMA_RELEASES}/tags/{t}"))?)?,
+        None => pick_llama_release(llama_releases()?, backend).with_context(|| {
+            format!(
+                "no recent llama.cpp release has a Windows build for {} - try --llama-cpp-tag <tag>",
+                backend.label()
+            )
+        })?,
     };
-    let rel = Release::parse(&net::get_text(&net::agent(), &api)?)?;
     let names: Vec<&str> = rel.assets.iter().map(|a| a.name.as_str()).collect();
     let Some((used, main, runtime)) = hardware::llama_assets_with_fallback(&names, backend) else {
         bail!(
-            "llama.cpp {} has no Windows build for {} - try --llama-cpp-tag <older tag>",
+            "llama.cpp {} has no Windows build for {} - try --llama-cpp-tag <other tag>",
             rel.tag_name,
             backend.label()
         );
     };
     if used != backend {
-        println!(
-            "  No {} build in this release; using {}.",
+        r.info(&format!(
+            "No {} build in this release; using {}.",
             backend.label(),
             used.label()
-        );
+        ));
     }
     let asset = |n: &str| rel.assets.iter().find(|a| a.name == n).unwrap();
-    println!(
+    r.info(&format!(
         "Downloading llama.cpp {} ({})...",
         rel.tag_name,
         used.label()
-    );
+    ));
     let zip_path = p.root.join("llama-download.zip"); // admin-only, unlike %TEMP%
-    download_verified(asset(main), &zip_path)?;
+    download_verified(asset(main), &zip_path, r)?;
     extract_llama_zip(&zip_path, &p.llama_dir)?;
     let _ = std::fs::remove_file(&zip_path);
     if let Some(rt) = runtime {
-        println!("Downloading the CUDA runtime...");
-        download_verified(asset(rt), &zip_path)?;
+        r.info("Downloading the CUDA runtime...");
+        download_verified(asset(rt), &zip_path, r)?;
         extract_zip_into(&zip_path, &p.llama_dir)?;
         let _ = std::fs::remove_file(&zip_path);
     }
@@ -314,7 +412,12 @@ pub(crate) fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
 
 /// Which model to download: an explicit choice, else nothing if the configured model is
 /// already there, else the best one for this PC.
-fn choose_model(p: &Paths, opts: &InstallOptions, pc: &catalog::Machine) -> Option<CatalogModel> {
+fn choose_model(
+    p: &Paths,
+    opts: &InstallOptions,
+    pc: &catalog::Machine,
+    r: &mut dyn Reporter,
+) -> Option<CatalogModel> {
     if opts.skip_model {
         return None;
     }
@@ -323,81 +426,112 @@ fn choose_model(p: &Paths, opts: &InstallOptions, pc: &catalog::Machine) -> Opti
     }
     let current = Settings::load(&p.settings).0.model;
     if p.model(&current).exists() && paths::missing_parts(&p.models_dir, &current).is_empty() {
-        println!("  Keeping your model: {current}");
+        r.info(&format!("Keeping your model: {current}"));
         return None;
     }
     let rec = catalog::recommend(pc);
     if rec.is_none() {
-        println!("  No model in the catalog fits this PC. Put a smaller .gguf in {} and pick it from the tray.", p.models_dir.display());
+        r.info(&format!(
+            "No model in the catalog fits this PC. Put a smaller .gguf in {} and pick it from the tray.",
+            p.models_dir.display()
+        ));
     }
     rec
 }
 
-fn install_model(p: &Paths, m: &CatalogModel) -> Result<()> {
-    println!(
-        "Downloading {} ({:.1} GB). Interrupted? Run the installer again to resume.",
-        m.label(),
+fn install_model(p: &Paths, m: &CatalogModel, r: &mut dyn Reporter) -> Result<()> {
+    r.info(&format!(
+        "Downloading {} {} ({:.1} GB). Interrupted? Run the installer again to resume.",
+        m.family,
+        m.quant,
         m.size as f64 / 1e9
-    );
+    ));
+    let cancel = r.cancel_flag();
     models::download_model(
         models::HF,
         m,
         &p.models_dir,
         &p.model_downloads,
-        print_progress,
-        None,
+        |d, t| r.progress(d, t),
+        Some(&cancel),
     )?;
-    println!();
     let mut s = Settings::load(&p.settings).0;
     s.model = m.primary_file();
     s.save(&p.settings)?;
-    println!("  Selected {}", m.primary_file());
+    r.info(&format!("Selected {}", m.primary_file()));
     Ok(())
 }
 
-/// Ollaya, when Laya is on (or `--laya` turns it on). The tray app downloads the Laya model
-/// once it starts.
-fn install_laya(p: &Paths, opts: &InstallOptions, nvidia: &[hardware::NvidiaGpu]) -> Result<()> {
-    let mut s = Settings::load(&p.settings).0;
-    if opts.laya && !s.run_laya {
-        s.run_laya = true;
-        s.save(&p.settings)?;
+/// The wizard's choices that live in settings.json. Called once C:\LLM is admin-only.
+fn apply_choices(p: &Paths, opts: &InstallOptions) -> Result<()> {
+    if opts.laya.is_none() && opts.start_with_windows.is_none() && opts.privacy.is_none() {
+        return Ok(());
     }
+    let mut s = Settings::load(&p.settings).0;
+    if let Some(on) = opts.laya {
+        s.run_laya = on;
+    }
+    if let Some(on) = opts.start_with_windows {
+        s.start_with_windows = on;
+    }
+    if let Some((crash, usage)) = opts.privacy {
+        s.send_crash_reports = crash;
+        s.share_usage_stats = usage;
+        s.privacy_asked = true;
+    }
+    Ok(s.save(&p.settings)?)
+}
+
+/// Ollaya, when Laya is on (`--laya` reinstalls it). The tray app downloads the Laya model
+/// once it starts.
+fn install_laya(
+    p: &Paths,
+    opts: &InstallOptions,
+    nvidia: &[hardware::NvidiaGpu],
+    r: &mut dyn Reporter,
+) -> Result<()> {
+    let s = Settings::load(&p.settings).0;
     if !s.run_laya {
         return Ok(());
     }
-    step("Laya (Ollaya)");
+    begin(r, StepId::Laya)?;
     let want_gpu = crate::laya::wants_gpu_pack(nvidia, s.laya_device);
     let record = p.ollaya_record();
-    if !opts.laya && !crate::laya::needs_install(record.as_ref(), p.ollaya_exe.exists(), want_gpu) {
-        println!(
-            "  Keeping Ollaya {}",
+    let force = opts.laya == Some(true);
+    if !force && !crate::laya::needs_install(record.as_ref(), p.ollaya_exe.exists(), want_gpu) {
+        r.info(&format!(
+            "Keeping Ollaya {}",
             record.map(|r| r.version).unwrap_or_default()
-        );
+        ));
         return Ok(());
     }
-    println!(
+    r.info(&format!(
         "Downloading Ollaya{}...",
         if want_gpu {
             " and its NVIDIA GPU pack (about 1.1 GB)"
         } else {
             ""
         }
-    );
+    ));
     std::fs::create_dir_all(&p.ollaya_dir)?;
-    let r = win_laya::install(
+    let cancel = r.cancel_flag();
+    let installed = win_laya::install(
         p,
         &win_laya::release_api(),
         want_gpu,
-        print_progress,
-        &std::sync::atomic::AtomicBool::new(false),
+        |d, t| r.progress(d, t),
+        &cancel,
     )?;
-    println!(
-        "\n  Ollaya {} installed ({}). The tray app downloads {} when it starts.",
-        r.version,
-        if r.gpu_pack { "NVIDIA GPU" } else { "CPU" },
+    r.info(&format!(
+        "Ollaya {} installed ({}). The tray app downloads {} when it starts.",
+        installed.version,
+        if installed.gpu_pack {
+            "NVIDIA GPU"
+        } else {
+            "CPU"
+        },
         s.laya_model
-    );
+    ));
     Ok(())
 }
 
@@ -568,15 +702,31 @@ fn register_uninstaller(exe: &Path) -> Result<()> {
     k.set_value("DisplayName", &APP_NAME)?;
     k.set_value("DisplayVersion", &env!("CARGO_PKG_VERSION"))?;
     k.set_value("Publisher", &APP_NAME)?;
-    k.set_value("DisplayIcon", &exe_s)?;
+    k.set_value("DisplayIcon", &format!("{exe_s},0"))?;
     k.set_value(
         "InstallLocation",
         &paths::install_dir().to_string_lossy().to_string(),
     )?;
-    k.set_value("UninstallString", &format!("\"{exe_s}\" uninstall"))?;
+    // Settings > Apps opens the uninstall wizard; scripts can use the quiet one.
+    k.set_value("UninstallString", &format!("\"{exe_s}\" setup --uninstall"))?;
+    k.set_value(
+        "QuietUninstallString",
+        &format!("\"{exe_s}\" uninstall --yes"),
+    )?;
+    k.set_value(
+        "InstallDate",
+        &chrono::Local::now().format("%Y%m%d").to_string(),
+    )?;
+    // KB, for the size Settings > Apps shows (the app itself; models live in C:\LLM).
+    let kb = std::fs::metadata(exe).map_or(0, |m| m.len() / 1024);
+    k.set_value("EstimatedSize", &(kb as u32))?;
     k.set_value(
         "URLInfoAbout",
         &format!("https://github.com/{}", paths::REPO),
+    )?;
+    k.set_value(
+        "HelpLink",
+        &format!("https://github.com/{}/issues", paths::REPO),
     )?;
     k.set_value("NoModify", &1u32)?;
     k.set_value("NoRepair", &1u32)?;
@@ -585,14 +735,25 @@ fn register_uninstaller(exe: &Path) -> Result<()> {
 
 // ------------------------------------------------------------------ install / uninstall
 
-pub fn install(opts: &InstallOptions) -> Result<()> {
-    println!("{APP_NAME} {} - install", env!("CARGO_PKG_VERSION"));
+/// What an install leaves running, for the closing message.
+pub struct Installed {
+    pub exe: PathBuf,
+    pub chat_url: String,
+    pub laya_url: Option<String>,
+    pub log: PathBuf,
+}
+
+pub fn install(opts: &InstallOptions, r: &mut dyn Reporter) -> Result<Installed> {
+    r.info(&format!(
+        "{APP_NAME} {} - install",
+        env!("CARGO_PKG_VERSION")
+    ));
     let p = Paths::system();
 
-    step("Stopping any running copy");
+    begin(r, StepId::Stop)?;
     stop_running(&p);
 
-    step("Installing the app");
+    begin(r, StepId::App)?;
     let dir = paths::install_dir();
     std::fs::create_dir_all(&dir)?;
     let exe = paths::installed_exe();
@@ -600,9 +761,9 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
     if !me.as_os_str().eq_ignore_ascii_case(exe.as_os_str()) {
         std::fs::copy(&me, &exe).with_context(|| format!("couldn't copy to {}", exe.display()))?;
     }
-    println!("  {}", exe.display());
+    r.info(&exe.display().to_string());
 
-    step("Setting up C:\\LLM");
+    begin(r, StepId::Folders)?;
     // Programs in a folder someone else owned can't be trusted: delete them (before taking
     // ownership, so a failure in between can't leave them looking trusted, and again after,
     // for anything put back meanwhile) so they're downloaded again.
@@ -613,95 +774,100 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
         }
     };
     if untrusted {
-        println!(
-            "  {} was created by another account: downloading llama.cpp and Ollaya again.",
+        r.info(&format!(
+            "{} was created by another account: downloading llama.cpp and Ollaya again.",
             p.root.display()
-        );
+        ));
         drop_programs();
     }
     for d in [&p.root, &p.llama_dir, &p.models_dir, &p.data_dir] {
         std::fs::create_dir_all(d)?;
     }
-    migrate_from_powershell(&p);
+    migrate_from_powershell(&p, r);
     set_acls(&p)?;
     if untrusted {
         drop_programs();
         std::fs::create_dir_all(&p.llama_dir)?;
     }
+    apply_choices(&p, opts)?;
 
-    step("Hardware");
+    begin(r, StepId::Hardware)?;
     let nvidia = probe::nvidia_gpus();
     let backend = opts
         .backend
         .unwrap_or_else(|| hardware::choose_backend(&nvidia));
     for g in &nvidia {
-        println!(
-            "  {} - driver {}, compute {}",
+        r.info(&format!(
+            "{} - driver {}, compute {}",
             g.name, g.driver_major, g.compute_cap
-        );
+        ));
     }
-    println!("  llama.cpp build: {}", backend.label());
+    r.info(&format!("llama.cpp build: {}", backend.label()));
 
     if opts.update_llama
         || !p.server_exe.exists()
         || installed_backend(&p).is_some_and(|b| b != backend)
     {
-        step("llama.cpp");
-        install_llama_cpp(&p, opts.llama_tag.as_deref(), backend)?;
+        begin(r, StepId::LlamaCpp)?;
+        install_llama_cpp(&p, opts.llama_tag.as_deref(), backend, r)?;
     }
     let (pc, gpu) = probe::machine(&p.server_exe);
-    println!(
-        "  GPU: {} · RAM: {:.0} GB",
+    r.info(&format!(
+        "GPU: {} · RAM: {:.0} GB",
         gpu.as_deref()
             .unwrap_or("none found (the model will run on the CPU)"),
         hardware::gib(pc.ram)
-    );
-    if let Some(m) = choose_model(&p, opts, &pc) {
-        step("Model");
-        install_model(&p, &m)?;
+    ));
+    if let Some(m) = choose_model(&p, opts, &pc, r) {
+        begin(r, StepId::Model)?;
+        install_model(&p, &m, r)?;
     }
-    install_laya(&p, opts, &nvidia)?;
+    install_laya(&p, opts, &nvidia, r)?;
 
+    begin(r, StepId::Settings)?;
     // Only on the first run, so re-running install never overwrites the original values.
     if !p.backup.exists() {
-        step("Backing up your power and network settings");
+        r.info("Backing up your power and network settings (uninstalling restores them).");
         write_backup(&p)?;
     }
-    if !opts.skip_power {
-        step("Low-power, always-on power settings");
+    if opts.skip_power {
+        r.info("Power settings left as they are.");
+    } else {
+        r.info("Low-power, always-on power settings.");
         apply_power()?;
     }
-    if !opts.skip_wol {
-        step("Wake-on-LAN on wired adapters");
+    if opts.skip_wol {
+        r.info("Wake-on-LAN left as it is.");
+    } else {
+        r.info("Wake-on-LAN on wired adapters:");
         match sys::powershell(WOL_ENABLE_PS) {
-            Ok(out) => print!("{out}"),
-            Err(e) => println!("  skipped: {e}"),
+            Ok(out) => out
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .for_each(|l| r.info(l.trim())),
+            Err(e) => r.info(&format!("skipped: {e}")),
         }
     }
 
-    step("Start at logon, Start menu entry, Apps & features entry");
+    begin(r, StepId::Register)?;
     adopt_start_with_windows(&p);
     let at_logon = Settings::load(&p.settings).0.start_with_windows;
     register_task(&p, &exe, at_logon)?;
     if let Err(e) = create_shortcut(&exe, &shortcut_path()) {
-        println!("  No Start menu entry: {e:#}");
+        r.info(&format!("No Start menu entry: {e:#}"));
     }
     register_uninstaller(&exe)?;
+
+    begin(r, StepId::Start)?;
     run_task()?;
 
     let s = Settings::load(&p.settings).0;
-    println!(
-        "\nDone. Look for the dot in the system tray (click ^ if hidden, drag it onto the taskbar to pin).\n\
-         Chat + OpenAI-compatible API: http://127.0.0.1:{}   Hotkey: Ctrl+Alt+L   Log: {}\n\
-         Uninstall from Settings > Apps, or: \"{}\" uninstall",
-        s.port,
-        p.log.display(),
-        exe.display()
-    );
-    if s.run_laya {
-        println!("Laya (Ollaya API): {}", crate::laya::base_url(&s));
-    }
-    Ok(())
+    Ok(Installed {
+        exe,
+        chat_url: format!("http://127.0.0.1:{}", s.port),
+        laya_url: s.run_laya.then(|| crate::laya::base_url(&s)),
+        log: p.log.clone(),
+    })
 }
 
 /// The running exe can't delete itself: have cmd remove the install folder a few seconds after
@@ -709,17 +875,33 @@ pub fn install(opts: &InstallOptions) -> Result<()> {
 pub fn delete_install_dir_after_exit() {
     let dir = paths::install_dir();
     if std::env::current_exe().is_ok_and(|e| e.starts_with(&dir)) && dir.exists() {
-        let _ = std::process::Command::new(sys::system_tool("cmd.exe"))
-            .raw_arg(format!(
-                "/c ping -n 4 127.0.0.1 >nul & rmdir /s /q \"{}\"",
-                dir.display()
-            ))
-            .creation_flags(sys::CREATE_NO_WINDOW | sys::DETACHED_PROCESS)
-            .spawn();
+        delete_after_exit(&[(&dir, true)]);
     }
 }
 
-fn prompt(q: &str, default_yes: bool) -> bool {
+/// Removes folders, in order, a few seconds after this process exits (for files in use until
+/// then). `(dir, false)` removes `dir` only if it's empty by then.
+pub fn delete_after_exit(dirs: &[(&Path, bool)]) {
+    let rmdirs: Vec<String> = dirs
+        .iter()
+        .map(|(d, recursive)| {
+            format!(
+                "rmdir {}\"{}\"",
+                if *recursive { "/s /q " } else { "" },
+                d.display()
+            )
+        })
+        .collect();
+    let _ = std::process::Command::new(sys::system_tool("cmd.exe"))
+        .raw_arg(format!(
+            "/c ping -n 4 127.0.0.1 >nul & {}",
+            rmdirs.join(" & ")
+        ))
+        .creation_flags(sys::CREATE_NO_WINDOW | sys::DETACHED_PROCESS)
+        .spawn();
+}
+
+pub fn prompt(q: &str, default_yes: bool) -> bool {
     print!("{q} {} ", if default_yes { "(Y/n)" } else { "(y/N)" });
     let _ = std::io::stdout().flush();
     let mut a = String::new();
@@ -733,68 +915,76 @@ fn prompt(q: &str, default_yes: bool) -> bool {
     }
 }
 
-pub fn uninstall(keep_models: bool, yes: bool) -> Result<()> {
-    println!("{APP_NAME} {} - uninstall", env!("CARGO_PKG_VERSION"));
-    if !yes && !prompt(
-        "Remove No Drama Llama, llama.cpp, your settings and (unless --keep-models) the models?",
-        false,
-    ) {
-        println!("Cancelled.");
-        return Ok(());
-    }
+const WINLOGON: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon";
+
+/// Windows signs in by itself at boot (set up for an always-on PC; uninstall offers to undo it).
+pub fn auto_sign_in() -> bool {
+    RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(WINLOGON)
+        .and_then(|k| k.get_value::<String, _>("AutoAdminLogon"))
+        .is_ok_and(|v| v == "1")
+}
+
+/// Where uninstalling moves the models you keep.
+pub fn downloads_dir() -> PathBuf {
+    PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Downloads")
+}
+
+pub const BIOS_NOTE: &str =
+    "Windows-side changes are reverted. Undo these BIOS settings by hand if you changed them:\n  \
+     - Restore on AC Power Loss  -> Power Off (or Last State)\n  - ErP / EuP -> Enabled\n  \
+     - Wake on LAN / Power On by PCI-E -> Disabled";
+
+pub fn uninstall(plan: &UninstallPlan, r: &mut dyn Reporter) -> Result<()> {
+    r.info(&format!(
+        "{APP_NAME} {} - uninstall",
+        env!("CARGO_PKG_VERSION")
+    ));
     let p = Paths::system();
 
-    step("Stopping the app and the model server");
+    begin(r, StepId::Stop)?;
     stop_running(&p);
     let _ = sys::run("schtasks.exe", &["/delete", "/tn", TASK_NAME, "/f"]);
     remove_shortcut(&shortcut_path());
-    migrate_from_powershell(&p); // also removes the PowerShell edition's task and shortcuts
+    migrate_from_powershell(&p, r); // also removes the PowerShell edition's task and shortcuts
 
-    step("Restoring your power and network settings");
+    begin(r, StepId::Restore)?;
     if p.backup.exists() {
         if let Err(e) = restore_backup(&p) {
-            println!("  some settings couldn't be restored: {e}");
+            r.info(&format!("Some settings couldn't be restored: {e}"));
         }
     } else {
-        println!("  No backup found; power settings left as they are (Settings > System > Power).");
+        r.info("No backup found; power settings left as they are (Settings > System > Power).");
     }
-
-    let wl = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon";
-    if let Ok(k) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags(wl, KEY_ALL_ACCESS) {
-        if k.get_value::<String, _>("AutoAdminLogon")
-            .is_ok_and(|v| v == "1")
-            && (yes || prompt("Automatic sign-in is on. Turn it off?", true))
+    if plan.disable_auto_sign_in && auto_sign_in() {
+        if let Ok(k) =
+            RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags(WINLOGON, KEY_ALL_ACCESS)
         {
             let _ = k.set_value("AutoAdminLogon", &"0");
             let _ = k.delete_value("DefaultPassword");
-            println!("  Auto sign-in disabled. If you used Sysinternals Autologon, also click 'Disable' in it to erase the stored password.");
+            r.info("Auto sign-in disabled. If you used Sysinternals Autologon, also click 'Disable' in it to erase the stored password.");
         }
     }
 
-    step("Removing files");
-    if keep_models {
-        let dest =
-            PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Downloads");
+    // No turning back from here: files go even if cancel is pressed now.
+    r.step(StepId::Files);
+    if plan.keep_models {
+        let dest = downloads_dir();
         for (m, _) in p.list_models() {
             if std::fs::rename(p.model(&m), dest.join(&m)).is_ok() {
-                println!("  Model kept: {}", dest.join(&m).display());
+                r.info(&format!("Model kept: {}", dest.join(&m).display()));
             }
         }
     }
     if p.root.exists() {
         std::fs::remove_dir_all(&p.root)
             .with_context(|| format!("couldn't delete {}", p.root.display()))?;
-        println!("  Deleted {}", p.root.display());
+        r.info(&format!("Deleted {}", p.root.display()));
     }
     let _ = RegKey::predef(HKEY_LOCAL_MACHINE).delete_subkey_all(UNINSTALL_KEY);
     let dir = paths::install_dir();
     if !std::env::current_exe()?.starts_with(&dir) {
         let _ = std::fs::remove_dir_all(&dir);
-    } // else: delete_install_dir_after_exit(), called as the very last thing
-    println!(
-        "\nDone. Windows-side changes are reverted. Undo these BIOS settings by hand if you changed them:\n  \
-         - Restore on AC Power Loss  -> Power Off (or Last State)\n  - ErP / EuP -> Enabled\n  \
-         - Wake on LAN / Power On by PCI-E -> Disabled"
-    );
+    } // else: delete_after_exit(), called as the very last thing
     Ok(())
 }

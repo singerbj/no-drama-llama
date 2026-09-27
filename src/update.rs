@@ -54,6 +54,11 @@ impl Release {
         serde_json::from_str(json).context("unexpected GitHub release JSON")
     }
 
+    /// Parses a `/releases` list (newest first).
+    pub fn parse_list(json: &str) -> Result<Vec<Release>> {
+        serde_json::from_str(json).context("unexpected GitHub releases JSON")
+    }
+
     pub fn version(&self) -> Result<Version> {
         let v = self.tag_name.trim_start_matches('v');
         Version::parse(v).with_context(|| format!("release tag {} is not a version", self.tag_name))

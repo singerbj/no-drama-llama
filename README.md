@@ -45,12 +45,18 @@ you quit.
 ## Install
 
 1. Download `no-drama-llama.exe` from the [latest release](https://github.com/singerbj/no-drama-llama/releases/latest).
-2. Run it and choose **Yes** to install, then approve the administrator prompt.
+2. Run it and approve the administrator prompt. The setup wizard opens.
 
-A console window shows progress. The installer:
-1. detects your GPU and installs the matching llama.cpp build: CUDA on NVIDIA, Vulkan on AMD and
-   Intel
-2. measures the GPU's memory and downloads the best model for it
+The wizard walks through:
+1. **System check:** Windows version, GPU and driver, memory, free disk space, the connection to
+   GitHub and Hugging Face, the `C:\LLM` folder and the API port. Anything that would stop the
+   install is shown in red with what to do about it.
+2. **Model:** the models that fit your GPU, with the best one selected. Keep your current model
+   on an upgrade, or install without one.
+3. **Options:** the llama.cpp build (CUDA on NVIDIA, Vulkan on AMD and Intel, picked for you),
+   always-on power settings, Wake-on-LAN, starting with Windows, and Laya.
+4. **Review and install:** a summary with the download size and disk space, then progress for
+   each step and download.
 
 If a download is interrupted, run the exe again and it resumes. Every download is checked
 against its published SHA-256. When the install finishes, the tray icon appears and the model
@@ -60,7 +66,7 @@ The app installs to `C:\Program Files\No Drama Llama`, starts with Windows, and 
 **Settings → Apps**. Upgrading from the PowerShell edition is automatic: your settings and
 models are kept, and the old scripts, task and shortcuts are removed.
 
-Installer options (from a terminal):
+For scripted installs, `install` does the same without the wizard (from a terminal):
 
 ```powershell
 .\no-drama-llama.exe models                          # what fits this PC
@@ -209,15 +215,15 @@ Free code signing provided by [SignPath.io](https://signpath.io), certificate by
 
 ## Uninstall
 
-Use **Settings → Apps → No Drama Llama → Uninstall**, or:
+Use **Settings → Apps → No Drama Llama → Uninstall**. The uninstall wizard asks whether to keep
+your models (they're moved to Downloads) and, if automatic sign-in is on, whether to turn it
+off. Then it restores your original power and Wake-on-LAN settings and deletes `C:\LLM` and the
+app. From a terminal, for scripts:
 
 ```powershell
 & "C:\Program Files\No Drama Llama\no-drama-llama.exe" uninstall                # asks first
 & "C:\Program Files\No Drama Llama\no-drama-llama.exe" uninstall --keep-models  # models go to Downloads
 ```
-
-This restores your original power and Wake-on-LAN settings, offers to turn off automatic
-sign-in, and deletes `C:\LLM` and the app.
 
 ## Troubleshooting
 

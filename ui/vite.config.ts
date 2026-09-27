@@ -1,8 +1,9 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
-// Tauri serves ui/dist from the exe (see tauri.conf.json). `npm run dev` opens the page in a
-// browser with sample data (src/mock.ts) for working on the layout.
+// Tauri serves ui/dist from the exe (see tauri.conf.json): index.html is the settings window,
+// setup.html the setup wizard. `npm run dev` opens them in a browser with sample data
+// (src/mock.ts, src/setup/mock.ts) for working on the layout.
 export default defineConfig({
   plugins: [react()],
   base: "./",
@@ -15,6 +16,9 @@ export default defineConfig({
     target: "es2022",
     // WebView2 is Chromium: no legacy polyfills needed.
     modulePreload: { polyfill: false },
+    rollupOptions: {
+      input: { settings: "index.html", setup: "setup.html" },
+    },
   },
   test: {
     environment: "jsdom",
