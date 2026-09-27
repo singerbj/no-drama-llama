@@ -79,7 +79,8 @@ pub fn parse_nvidia_smi(output: &str) -> Vec<NvidiaGpu> {
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Backend {
     /// AMD, Intel, anything with a Vulkan driver (and NVIDIA as a fallback)
     Vulkan,
@@ -119,15 +120,21 @@ impl Backend {
 /// Best llama.cpp build for this PC. CUDA is faster than Vulkan on NVIDIA, if the driver and
 /// card are new enough; AMD stays on Vulkan (avoids ROCm's idle-power problem on RDNA3).
 pub fn choose_backend(nvidia: &[NvidiaGpu]) -> Backend {
+    [Backend::Cuda13, Backend::Cuda12]
+        .into_iter()
+        .find(|b| backend_supported(*b, nvidia))
+        .unwrap_or(Backend::Vulkan)
+}
+
+/// Whether this PC's biggest NVIDIA card and its driver can run `backend`'s build.
+pub fn backend_supported(backend: Backend, nvidia: &[NvidiaGpu]) -> bool {
     let Some(best) = nvidia.iter().max_by_key(|g| g.memory_mib) else {
-        return Backend::Vulkan;
+        return backend == Backend::Vulkan;
     };
-    if best.driver_major >= 580 && best.compute_cap >= 7.5 {
-        Backend::Cuda13
-    } else if best.driver_major >= 528 && best.compute_cap >= 6.0 {
-        Backend::Cuda12
-    } else {
-        Backend::Vulkan
+    match backend {
+        Backend::Vulkan => true,
+        Backend::Cuda12 => best.driver_major >= 528 && best.compute_cap >= 6.0,
+        Backend::Cuda13 => best.driver_major >= 580 && best.compute_cap >= 7.5,
     }
 }
 

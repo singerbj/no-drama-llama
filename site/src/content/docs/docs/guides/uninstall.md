@@ -3,7 +3,9 @@ title: Uninstall
 description: Remove No Drama Llama and restore your original settings.
 ---
 
-Use **Settings → Apps → No Drama Llama → Uninstall**, or from a terminal:
+Use **Settings → Apps → No Drama Llama → Uninstall**. The uninstall wizard asks whether to
+keep your models (they're moved to Downloads) and, if automatic sign-in is on, whether to turn
+it off. For scripts, use the terminal instead:
 
 ```powershell
 & "C:\Program Files\No Drama Llama\no-drama-llama.exe" uninstall                # asks first

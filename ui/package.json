@@ -2,7 +2,7 @@
   "name": "no-drama-llama-settings",
   "version": "0.0.0",
   "private": true,
-  "description": "The settings window's frontend (served by Tauri from ui/dist)",
+  "description": "The settings window's and setup wizard's frontend (served by Tauri from ui/dist)",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -521,6 +521,44 @@ pub fn powershell(script: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Bytes this user can still write on the drive holding `path` (or its nearest existing parent).
+pub fn disk_free(path: &Path) -> Option<u64> {
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let dir = path.ancestors().find(|d| d.exists())?;
+    let mut free = 0u64;
+    let name = wide(dir);
+    unsafe {
+        GetDiskFreeSpaceExW(
+            PCWSTR(name.as_ptr()),
+            Some(&mut free as *mut u64),
+            None,
+            None,
+        )
+    }
+    .ok()?;
+    Some(free)
+}
+
+/// Windows' build number (19045 = Windows 10 22H2, 22000+ = Windows 11).
+pub fn windows_build() -> Option<u32> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+        .and_then(|k| k.get_value::<String, _>("CurrentBuildNumber"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// True if the PC has a battery (a laptop, or a desktop on a UPS that reports as one).
+pub fn has_battery() -> bool {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut s = SYSTEM_POWER_STATUS::default();
+    // 128: no system battery; 255: unknown
+    unsafe { GetSystemPowerStatus(&mut s) }.is_ok() && s.BatteryFlag != 128 && s.BatteryFlag != 255
+}
+
 /// Opens a URL, file or folder with its default app, *not* elevated (explorer hands it off).
 pub fn open_unelevated(target: &Path) {
     let _ = Command::new(system_tool("explorer.exe"))

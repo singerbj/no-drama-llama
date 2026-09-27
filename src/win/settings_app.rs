@@ -61,6 +61,12 @@ fn relay_events(app: AppHandle) {
     app.exit(0);
 }
 
+/// The app's Tauri config and bundled pages (`ui/dist`), shared with the setup wizard so
+/// they're embedded once.
+pub(crate) fn context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 pub fn run() -> i32 {
     let result = tauri::Builder::default()
         .manage(Latest::default())
@@ -84,7 +90,7 @@ pub fn run() -> i32 {
             std::thread::spawn(move || relay_events(handle));
             Ok(())
         })
-        .run(tauri::generate_context!());
+        .run(context());
     match result {
         Ok(()) => 0,
         Err(e) => {

@@ -17,8 +17,12 @@ pub struct InstallArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// No arguments: install if needed, otherwise start the tray app.
+    /// No arguments: the setup wizard if not installed, otherwise start the tray app.
     Default,
+    /// The setup wizard (needs admin; asks for it), or with `--uninstall` the uninstall wizard.
+    Setup {
+        uninstall: bool,
+    },
     Run {
         after_update: Option<String>,
     },
@@ -41,9 +45,11 @@ No Drama Llama - local LLM server that pauses while you play
 Usage: no-drama-llama.exe [command]
 
 Commands:
-  (none)       Install if needed, otherwise start the tray app
+  (none)       Open the setup wizard if needed, otherwise start the tray app
+  setup        Open the setup wizard (install, upgrade or change the model)
+      --uninstall             open the uninstall wizard instead
   run          Start the tray app
-  install      Install or upgrade (needs admin; asks for it)
+  install      Install or upgrade without the wizard, for scripts (needs admin; asks for it)
       --model <id|auto|none>  model to download (default: auto = best for your GPU;
                               ids: `no-drama-llama.exe models`)
       --skip-model            same as --model none
@@ -53,7 +59,7 @@ Commands:
       --llama-cpp-tag <tag>   install this llama.cpp build (default: latest)
       --update-llama-cpp      download llama.cpp again
       --laya                  also run Laya, a decision model (installs Ollaya from ollaya.dev)
-  uninstall    Remove everything and restore your settings
+  uninstall    Remove everything and restore your settings, without the wizard
       --keep-models           move models to Downloads first
       --yes                   don't ask
   update       Check for a new version and install it
@@ -153,6 +159,16 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
                 }
             }
             Ok(Command::Uninstall { keep_models, yes })
+        }
+        "setup" => {
+            let mut uninstall = false;
+            for f in flags {
+                match f {
+                    "--uninstall" => uninstall = true,
+                    _ => return unknown(f),
+                }
+            }
+            Ok(Command::Setup { uninstall })
         }
         "update" if rest.is_empty() => Ok(Command::Update),
         "settings-window" if rest.is_empty() => Ok(Command::SettingsWindow),
@@ -333,6 +349,12 @@ mod tests {
     #[test]
     fn misc_commands() {
         assert_eq!(p(&["update"]), Ok(Command::Update));
+        assert_eq!(p(&["setup"]), Ok(Command::Setup { uninstall: false }));
+        assert_eq!(
+            p(&["setup", "--uninstall"]),
+            Ok(Command::Setup { uninstall: true })
+        );
+        assert!(p(&["setup", "--bogus"]).is_err());
         assert!(p(&["update", "now"]).is_err());
         assert_eq!(p(&["settings-window"]), Ok(Command::SettingsWindow));
         assert!(p(&["settings-window", "x"]).is_err());
@@ -352,6 +374,8 @@ mod tests {
             "--model",
             "--backend",
             "run",
+            "setup",
+            "--uninstall",
             "install",
             "uninstall",
             "update",

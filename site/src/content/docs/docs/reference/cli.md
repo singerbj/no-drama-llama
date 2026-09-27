@@ -11,10 +11,11 @@ After installing, the exe lives at `C:\Program Files\No Drama Llama\no-drama-lla
 
 | Command | What it does |
 | --- | --- |
-| *(none)* | Installs if needed, otherwise starts the tray app |
+| *(none)* | Opens the setup wizard if needed, otherwise starts the tray app |
+| `setup` | Opens the setup wizard (install, upgrade or change the model). `--uninstall` opens the uninstall wizard. Needs admin, and asks for it. |
 | `run` | Starts the tray app |
-| `install` | Installs or upgrades. Needs admin, and asks for it. |
-| `uninstall` | Removes everything and restores your settings |
+| `install` | Installs or upgrades without the wizard, for scripts. Needs admin, and asks for it. |
+| `uninstall` | Removes everything and restores your settings, without the wizard |
 | `update` | Checks for a new version and installs it |
 | `models` | Lists downloadable models and what fits this PC |
 | `version` | Prints the version |
