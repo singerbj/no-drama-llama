@@ -13,7 +13,7 @@ use crate::paths::Paths;
 use crate::server::ServerCaps;
 use crate::settings::{self, Settings};
 use crate::state::{Action, Inputs, Machine, Popup, Status};
-use crate::{log, server};
+use crate::{gguf, log, server};
 use std::os::windows::process::CommandExt;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -857,10 +857,16 @@ impl Worker {
 
     fn start_server(&mut self) -> Result<(), String> {
         let model = self.p.model(&self.s.model);
+        let head_dims = std::fs::File::open(&model)
+            .ok()
+            .and_then(|f| gguf::head_dims(std::io::BufReader::new(f)));
+        if let Some((k, v)) = head_dims.filter(|_| !server::q8_0_kv_fits(head_dims)) {
+            log!("KV cache f16: head size {k}/{v} isn't a multiple of 32, which q8_0 needs");
+        }
         let log_file = std::fs::File::create(&self.p.server_log)
             .map_err(|e| format!("can't write server.log: {e}"))?;
         sys::hidden(&self.p.server_exe)
-            .args(server::server_args(&self.s, &model, self.caps))
+            .args(server::server_args(&self.s, &model, self.caps, head_dims))
             .current_dir(&self.p.llama_dir)
             .stdout(Stdio::null())
             .stderr(log_file)

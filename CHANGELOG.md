@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Your own models with small attention heads.** llama-server refused to load a `.gguf` whose
+  attention head size isn't a multiple of 32 (tiny and some small models), because the KV cache
+  was always `q8_0`. The app now reads the head size from the model file and uses an `f16` KV
+  cache for those models.
+- **Uninstall and network adapters without Wake-on-LAN.** Restoring an adapter whose Wake-on-LAN
+  was backed up as "Unsupported" failed, and stopped the rest of the network settings from being
+  restored. Those adapters are now skipped, and one adapter can no longer stop the others.
+
+### Added
+- **End-to-end CI on Windows.** Every change is installed on Windows Server 2022 and 2025
+  runners, runs a small model through the tray app and API, and is uninstalled again.
+
 ## [0.0.3]
 
 ### Fixed

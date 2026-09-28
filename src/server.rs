@@ -34,8 +34,20 @@ pub fn is_qwen(model_file: &str) -> bool {
     model_file.to_ascii_lowercase().starts_with("qwen")
 }
 
+/// q8_0 stores the KV cache in blocks of 32 values per attention head, so llama.cpp refuses it
+/// for models whose head size isn't a multiple of 32 (tiny test models, some small ones).
+pub fn q8_0_kv_fits(head_dims: Option<(u32, u32)>) -> bool {
+    head_dims.is_none_or(|(k, v)| k % 32 == 0 && v % 32 == 0)
+}
+
 /// Arguments for llama-server (passed as separate argv entries; std quotes them).
-pub fn server_args(s: &Settings, model: &Path, caps: ServerCaps) -> Vec<String> {
+/// `head_dims` = the model's (key, value) head sizes from its GGUF header, if readable.
+pub fn server_args(
+    s: &Settings,
+    model: &Path,
+    caps: ServerCaps,
+    head_dims: Option<(u32, u32)>,
+) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "-m".into(),
         model.to_string_lossy().into_owned(),
@@ -58,14 +70,19 @@ pub fn server_args(s: &Settings, model: &Path, caps: ServerCaps) -> Vec<String> 
         };
         a.extend(["-ngl".into(), "99".into(), "-c".into(), ctx.to_string()]);
     }
+    let kv = if q8_0_kv_fits(head_dims) {
+        "q8_0"
+    } else {
+        "f16"
+    };
     a.extend(
         [
             "-fa",
             "on",
             "--cache-type-k",
-            "q8_0",
+            kv,
             "--cache-type-v",
-            "q8_0",
+            kv,
             "--parallel",
             "1",
             "--jinja",
@@ -132,7 +149,7 @@ mod tests {
     }
 
     fn args(s: &Settings) -> Vec<String> {
-        server_args(s, Path::new(QWEN), FIT)
+        server_args(s, Path::new(QWEN), FIT, None)
     }
 
     #[test]
@@ -176,7 +193,7 @@ mod tests {
 
     #[test]
     fn builds_without_fit_get_the_old_explicit_settings() {
-        let a = server_args(&Settings::default(), Path::new(QWEN), OLD);
+        let a = server_args(&Settings::default(), Path::new(QWEN), OLD, None);
         assert_eq!(arg(&a, "-ngl"), Some("99"));
         assert_eq!(arg(&a, "-c"), Some(&*FALLBACK_CONTEXT.to_string()));
         let a = server_args(
@@ -186,6 +203,7 @@ mod tests {
             },
             Path::new(QWEN),
             OLD,
+            None,
         );
         assert_eq!(arg(&a, "-c"), Some("8192"));
     }
@@ -198,6 +216,25 @@ mod tests {
         assert_eq!(arg(&a, "--cache-type-v"), Some("q8_0"));
         assert_eq!(arg(&a, "--parallel"), Some("1"));
         assert!(a.contains(&"--jinja".to_string()));
+    }
+
+    #[test]
+    fn kv_cache_is_q8_0_only_when_the_head_size_allows() {
+        let kv = |dims| {
+            let a = server_args(&Settings::default(), Path::new(QWEN), FIT, dims);
+            (
+                arg(&a, "--cache-type-k").map(str::to_owned),
+                arg(&a, "--cache-type-v").map(str::to_owned),
+            )
+        };
+        let q8 = (Some("q8_0".to_owned()), Some("q8_0".to_owned()));
+        let f16 = (Some("f16".to_owned()), Some("f16".to_owned()));
+        assert_eq!(kv(None), q8, "unknown: assume a normal model");
+        assert_eq!(kv(Some((128, 128))), q8);
+        assert_eq!(kv(Some((192, 128))), q8);
+        assert_eq!(kv(Some((8, 8))), f16, "stories260K");
+        assert_eq!(kv(Some((48, 48))), f16, "stories15M");
+        assert_eq!(kv(Some((128, 80))), f16, "both caches use the same type");
     }
 
     #[test]
@@ -242,7 +279,7 @@ mod tests {
             "C:/LLM/models/Llama-4-Scout.gguf",
             "C:/LLM/models/my.gguf",
         ] {
-            let a = server_args(&Settings::default(), Path::new(f), FIT);
+            let a = server_args(&Settings::default(), Path::new(f), FIT, None);
             assert_eq!(arg(&a, "--temp"), None, "{f}");
             assert_eq!(arg(&a, "--chat-template-kwargs"), None, "{f}");
             assert!(a.contains(&"--jinja".to_string()));
@@ -271,6 +308,7 @@ mod tests {
             &Settings::default(),
             Path::new(r"C:\LLM\models\My Model (v2).gguf"),
             FIT,
+            None,
         );
         assert_eq!(arg(&a, "-m"), Some(r"C:\LLM\models\My Model (v2).gguf"));
     }
@@ -286,6 +324,7 @@ mod tests {
                 },
                 Path::new(QWEN),
                 caps,
+                None,
             );
             let flags: Vec<&String> = a
                 .iter()
@@ -314,7 +353,7 @@ mod tests {
         fn args_are_well_formed(port in 1024u16.., ctx in prop_oneof![Just(0u32), 512u32..1_048_576], key in "[A-Za-z0-9._~-]{0,20}", fit: bool, qwen: bool) {
             let s = Settings { port, context: ctx, api_key: key.clone(), ..Default::default() };
             let model = if qwen { QWEN } else { "C:/m/other.gguf" };
-            let a = server_args(&s, Path::new(model), ServerCaps { fit });
+            let a = server_args(&s, Path::new(model), ServerCaps { fit }, None);
             prop_assert!(a.iter().all(|x| !x.is_empty()));
             prop_assert_eq!(a.len() % 2, 1, "flag/value pairs + the lone --jinja");
             prop_assert_eq!(arg(&a, "--port"), Some(&*port.to_string()));

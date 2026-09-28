@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod cli;
 pub mod control;
 pub mod detect;
+pub mod gguf;
 pub mod hardware;
 pub mod installer;
 pub mod laya;

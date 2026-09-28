@@ -127,14 +127,21 @@ pub fn ps_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-/// PowerShell that restores the network adapters listed in the backup file.
+/// PowerShell that restores the network adapters listed in the backup file. Adapters without
+/// Wake-on-LAN back up `Magic` as "Unsupported", which `-WakeOnMagicPacket` rejects with an
+/// error `-ErrorAction` can't silence, so only Enabled/Disabled are put back, and each call is
+/// in its own try so one adapter can't stop the rest from being restored.
 pub fn nic_restore_ps(backup: &Path) -> String {
     format!(
         r#"
 $b = Get-Content -Raw {} | ConvertFrom-Json
 foreach ($n in $b.Nics) {{
-  if ($n.Magic) {{ Set-NetAdapterPowerManagement -Name $n.Name -WakeOnMagicPacket $n.Magic -ErrorAction SilentlyContinue }}
-  foreach ($a in $n.Adv) {{ Set-NetAdapterAdvancedProperty -Name $n.Name -DisplayName $a.DisplayName -DisplayValue $a.DisplayValue -ErrorAction SilentlyContinue }}
+  if ($n.Magic -in 'Enabled', 'Disabled') {{
+    try {{ Set-NetAdapterPowerManagement -Name $n.Name -WakeOnMagicPacket $n.Magic -ErrorAction SilentlyContinue }} catch {{}}
+  }}
+  foreach ($a in $n.Adv) {{
+    try {{ Set-NetAdapterAdvancedProperty -Name $n.Name -DisplayName $a.DisplayName -DisplayValue $a.DisplayValue -ErrorAction SilentlyContinue }} catch {{}}
+  }}
 }}
 "#,
         ps_single_quote(&backup.to_string_lossy())
@@ -475,6 +482,13 @@ mod tests {
             "{s}"
         );
         assert_eq!(ps_single_quote("a'b"), "'a''b'");
+    }
+
+    #[test]
+    fn nic_restore_skips_unsupported_wake_on_lan() {
+        let s = nic_restore_ps(Path::new(r"C:\LLM\settings-backup.json"));
+        assert!(s.contains("if ($n.Magic -in 'Enabled', 'Disabled')"), "{s}");
+        assert_eq!(s.matches("try {").count(), 2, "{s}");
     }
 
     #[test]
