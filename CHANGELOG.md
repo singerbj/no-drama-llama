@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.0.4]
+
 ### Fixed
 - **Your own models with small attention heads.** llama-server refused to load a `.gguf` whose
   attention head size isn't a multiple of 32 (tiny and some small models), because the KV cache
