@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.0.3]
+
 ### Fixed
 - **Windows 11 Administrator Protection.** The setup and settings windows failed with
   "Microsoft Edge can't read and write to its data directory": WebView2 drops elevation there
