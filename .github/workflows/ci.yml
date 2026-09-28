@@ -166,9 +166,10 @@ jobs:
       EXE: ${{ github.workspace }}\no-drama-llama.exe
       INSTALLED: C:\Program Files\No Drama Llama\no-drama-llama.exe
       UNINSTALL_KEY: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NoDramaLlama
-      # A ~1 MB model from llama.cpp's own tests: enough to prove llama-server loads and answers.
-      TEST_MODEL_URL: https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf
-      TEST_MODEL: stories260K.gguf
+      # A 145 MB chat model: enough to prove llama-server loads it and answers. (The app's q8_0 KV
+      # cache needs a head size that's a multiple of 32, which rules out the tiny test llamas.)
+      TEST_MODEL_URL: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q8_0.gguf
+      TEST_MODEL: SmolLM2-135M-Instruct-Q8_0.gguf
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -216,10 +217,10 @@ jobs:
           }
           if (-not (Get-Process no-drama-llama -ErrorAction SilentlyContinue)) { throw 'tray app is not running' }
           Invoke-RestMethod http://127.0.0.1:8080/v1/models | ConvertTo-Json -Depth 5
-          $body = @{ prompt = 'Once upon a time'; max_tokens = 16 } | ConvertTo-Json
-          $r = Invoke-RestMethod http://127.0.0.1:8080/v1/completions -Method Post -ContentType application/json -Body $body
+          $body = @{ messages = @(@{ role = 'user'; content = 'Say hello.' }); max_tokens = 16 } | ConvertTo-Json -Depth 5
+          $r = Invoke-RestMethod http://127.0.0.1:8080/v1/chat/completions -Method Post -ContentType application/json -Body $body
           $r | ConvertTo-Json -Depth 5
-          if (-not $r.choices[0].text) { throw 'empty completion' }
+          if (-not $r.choices[0].message.content) { throw 'empty chat completion' }
       - name: Logs (before uninstall deletes them)
         if: always()
         run: |
