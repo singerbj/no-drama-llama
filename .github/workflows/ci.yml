@@ -166,8 +166,7 @@ jobs:
       EXE: ${{ github.workspace }}\no-drama-llama.exe
       INSTALLED: C:\Program Files\No Drama Llama\no-drama-llama.exe
       UNINSTALL_KEY: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NoDramaLlama
-      # A 145 MB chat model: enough to prove llama-server loads it and answers. (The app's q8_0 KV
-      # cache needs a head size that's a multiple of 32, which rules out the tiny test llamas.)
+      # A 145 MB chat model: enough to prove llama-server loads it and answers a chat.
       TEST_MODEL_URL: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q8_0.gguf
       TEST_MODEL: SmolLM2-135M-Instruct-Q8_0.gguf
     steps:
@@ -208,7 +207,8 @@ jobs:
           $deadline = (Get-Date).AddMinutes(4)
           while ($true) {
             try { if ((Invoke-WebRequest http://127.0.0.1:8080/health -TimeoutSec 5).StatusCode -eq 200) { break } } catch {}
-            if ((Get-Date) -gt $deadline) {
+            $gaveUp = Select-String -Path C:\LLM\data\tray.log -Pattern '(fail 3)' -SimpleMatch -ErrorAction SilentlyContinue
+            if ($gaveUp -or (Get-Date) -gt $deadline) {
               Get-ScheduledTaskInfo -TaskName 'No Drama Llama' | Format-List
               Get-Process no-drama-llama, llama-server -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime
               throw 'llama-server never became healthy'
@@ -221,6 +221,28 @@ jobs:
           $r = Invoke-RestMethod http://127.0.0.1:8080/v1/chat/completions -Method Post -ContentType application/json -Body $body
           $r | ConvertTo-Json -Depth 5
           if (-not $r.choices[0].message.content) { throw 'empty chat completion' }
+      - name: A model whose head size q8_0 can't use falls back to an f16 KV cache
+        run: |
+          # stories260K's attention heads are 8 wide; q8_0 needs multiples of 32.
+          Invoke-WebRequest https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf -OutFile C:\LLM\models\stories260K.gguf
+          $fails = @(Select-String -Path C:\LLM\data\tray.log -Pattern '(fail 3)' -SimpleMatch).Count
+          $s = Get-Content C:\LLM\data\settings.json -Raw | ConvertFrom-Json -AsHashtable
+          $s.Model = 'stories260K.gguf'
+          $s | ConvertTo-Json -Depth 10 | Set-Content C:\LLM\data\settings.json -Encoding utf8
+          # The tray app picks up settings.json edits within a few seconds and restarts the server.
+          $deadline = (Get-Date).AddMinutes(2)
+          while ($true) {
+            try { if ((Invoke-RestMethod http://127.0.0.1:8080/v1/models -TimeoutSec 5).data.id -match 'stories260K') { break } } catch {}
+            if (@(Select-String -Path C:\LLM\data\tray.log -Pattern '(fail 3)' -SimpleMatch).Count -gt $fails -or (Get-Date) -gt $deadline) {
+              throw 'llama-server never came up with stories260K'
+            }
+            Start-Sleep 3
+          }
+          if (-not (Select-String -Path C:\LLM\data\tray.log -Pattern 'KV cache f16' -SimpleMatch)) { throw 'no f16 KV cache fallback in tray.log' }
+          $body = @{ prompt = 'Once upon a time'; max_tokens = 16 } | ConvertTo-Json
+          $r = Invoke-RestMethod http://127.0.0.1:8080/v1/completions -Method Post -ContentType application/json -Body $body
+          $r | ConvertTo-Json -Depth 5
+          if (-not $r.choices[0].text) { throw 'empty completion' }
       - name: Logs (before uninstall deletes them)
         if: always()
         run: |
@@ -233,6 +255,7 @@ jobs:
             -RedirectStandardOutput uninstall.out -RedirectStandardError uninstall.err
           Get-Content uninstall.out, uninstall.err -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { throw "uninstall exited with $($p.ExitCode)" }
+          if (Select-String -Path uninstall.out, uninstall.err -Pattern "couldn't be restored" -SimpleMatch) { throw 'uninstall left settings unrestored' }
           # The installed exe deletes its own folder a few seconds after it exits.
           $deadline = (Get-Date).AddSeconds(60)
           while ((Test-Path 'C:\Program Files\No Drama Llama') -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
