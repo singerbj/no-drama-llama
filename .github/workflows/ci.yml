@@ -180,7 +180,7 @@ jobs:
             -RedirectStandardOutput install.out -RedirectStandardError install.err
           Get-Content install.out, install.err -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { throw "install exited with $($p.ExitCode)" }
-          foreach ($f in $env:INSTALLED, 'C:\LLM\llama\llama-server.exe', 'C:\LLM\data\settings.json', 'C:\LLM\settings-backup.json') {
+          foreach ($f in $env:INSTALLED, 'C:\LLM\llama\llama-server.exe', 'C:\LLM\settings-backup.json') {
             if (-not (Test-Path $f)) { throw "missing after install: $f" }
           }
           if (-not (Get-ScheduledTask -TaskName 'No Drama Llama' -ErrorAction SilentlyContinue)) { throw 'logon task not registered' }
@@ -192,7 +192,8 @@ jobs:
           schtasks /end /tn 'No Drama Llama' | Out-Null
           Get-Process no-drama-llama, llama-server -ErrorAction SilentlyContinue | Stop-Process -Force
           Invoke-WebRequest $env:TEST_MODEL_URL -OutFile "C:\LLM\models\$env:TEST_MODEL"
-          $s = Get-Content C:\LLM\data\settings.json -Raw | ConvertFrom-Json -AsHashtable
+          # With --model none, install leaves settings.json to the tray app, which may not have written it yet.
+          $s = if (Test-Path C:\LLM\data\settings.json) { Get-Content C:\LLM\data\settings.json -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
           $s.Model = $env:TEST_MODEL
           $s.AutoUpdate = $false        # never swap in the published release mid-test
           $s.PauseWhileGaming = $false  # nothing on a runner should count as a game, but be sure
