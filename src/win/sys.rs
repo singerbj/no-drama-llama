@@ -16,9 +16,11 @@ use windows::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
 };
 use windows::Win32::Security::{
-    GetSecurityDescriptorDacl, GetTokenInformation, TokenElevation, TokenUser,
-    DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-    PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_ELEVATION, TOKEN_QUERY, TOKEN_USER,
+    GetSecurityDescriptorDacl, GetTokenInformation, TokenElevation, TokenElevationType,
+    TokenElevationTypeFull, TokenLinkedToken, TokenUser, DACL_SECURITY_INFORMATION,
+    OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    SECURITY_ATTRIBUTES, TOKEN_ELEVATION, TOKEN_ELEVATION_TYPE, TOKEN_LINKED_TOKEN, TOKEN_QUERY,
+    TOKEN_USER,
 };
 use windows::Win32::Storage::FileSystem::CreateDirectoryW;
 use windows::Win32::System::Com::CoTaskMemFree;
@@ -29,8 +31,8 @@ use windows::Win32::System::Threading::{
     WaitForSingleObject, INFINITE,
 };
 use windows::Win32::UI::Shell::{
-    FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW, KF_FLAG_DEFAULT,
-    SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    FOLDERID_LocalAppData, FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW,
+    KF_FLAG_DEFAULT, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK,
@@ -65,29 +67,110 @@ pub fn is_elevated() -> bool {
     }
 }
 
-/// SID of the signed-in user (e.g. `S-1-5-21-...`). The same when elevated through UAC.
+/// SID of the signed-in user (e.g. `S-1-5-21-...`), also when elevated: through UAC or under
+/// Administrator Protection, where the elevated process runs as a separate hidden admin account.
 pub fn current_user_sid() -> Result<String> {
     unsafe {
         let mut token = HANDLE::default();
         OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)?;
-        let mut len = 0u32;
-        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
-        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
-        let r = GetTokenInformation(
-            token,
-            TokenUser,
-            Some(buf.as_mut_ptr() as *mut _),
-            len,
-            &mut len,
-        );
+        let r = match admin_protection_token(token) {
+            Some(linked) => {
+                let r = token_sid(linked);
+                let _ = CloseHandle(linked);
+                r
+            }
+            None => token_sid(token),
+        };
         let _ = CloseHandle(token);
-        r?;
-        let user = &*(buf.as_ptr() as *const TOKEN_USER);
-        let mut s = PWSTR::null();
-        ConvertSidToStringSidW(user.User.Sid, &mut s)?;
-        let out = s.to_string()?;
-        let _ = LocalFree(Some(HLOCAL(s.0 as *mut _)));
-        Ok(out)
+        r
+    }
+}
+
+unsafe fn token_sid(token: HANDLE) -> Result<String> {
+    let mut len = 0u32;
+    let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
+    let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+    GetTokenInformation(
+        token,
+        TokenUser,
+        Some(buf.as_mut_ptr() as *mut _),
+        len,
+        &mut len,
+    )?;
+    let user = &*(buf.as_ptr() as *const TOKEN_USER);
+    let mut s = PWSTR::null();
+    ConvertSidToStringSidW(user.User.Sid, &mut s)?;
+    let out = s.to_string()?;
+    let _ = LocalFree(Some(HLOCAL(s.0 as *mut _)));
+    Ok(out)
+}
+
+/// The signed-in user's token (to close) when `token` is elevated under Windows 11's
+/// Administrator Protection: the elevated process then runs as a hidden admin account, whose
+/// linked token is the signed-in user. With plain UAC both tokens are the same user: `None`.
+unsafe fn admin_protection_token(token: HANDLE) -> Option<HANDLE> {
+    let mut kind = TOKEN_ELEVATION_TYPE::default();
+    let mut len = 0u32;
+    GetTokenInformation(
+        token,
+        TokenElevationType,
+        Some(&mut kind as *mut _ as *mut _),
+        std::mem::size_of::<TOKEN_ELEVATION_TYPE>() as u32,
+        &mut len,
+    )
+    .ok()?;
+    if kind != TokenElevationTypeFull {
+        return None;
+    }
+    let mut linked = TOKEN_LINKED_TOKEN::default();
+    GetTokenInformation(
+        token,
+        TokenLinkedToken,
+        Some(&mut linked as *mut _ as *mut _),
+        std::mem::size_of::<TOKEN_LINKED_TOKEN>() as u32,
+        &mut len,
+    )
+    .ok()?;
+    match (token_sid(token), token_sid(linked.LinkedToken)) {
+        (Ok(a), Ok(b)) if a != b => Some(linked.LinkedToken),
+        _ => {
+            let _ = CloseHandle(linked.LinkedToken);
+            None
+        }
+    }
+}
+
+/// The signed-in user's `%LOCALAPPDATA%` when this process is elevated under Administrator
+/// Protection, else `None`. WebView2 drops elevation there and runs as the signed-in user, so
+/// it can't use a profile folder only admins (or the hidden admin account) can write to.
+pub fn admin_protection_local_app_data() -> Option<PathBuf> {
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
+        let linked = admin_protection_token(token);
+        let _ = CloseHandle(token);
+        let linked = linked?;
+        let known = SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DEFAULT, Some(linked))
+            .ok()
+            .and_then(|p| {
+                let out = p.to_string().ok().map(PathBuf::from);
+                CoTaskMemFree(Some(p.0 as *const _));
+                out
+            });
+        let sid = token_sid(linked).ok();
+        let _ = CloseHandle(linked);
+        // The linked token may be too weak for the shell: fall back to the profile's default.
+        known.or_else(|| {
+            let profile: String = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+                .open_subkey(format!(
+                    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{}",
+                    sid?
+                ))
+                .ok()?
+                .get_value("ProfileImagePath")
+                .ok()?;
+            Some(PathBuf::from(profile).join(r"AppData\Local"))
+        })
     }
 }
 
