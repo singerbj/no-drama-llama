@@ -7,6 +7,7 @@ use super::sys;
 use crate::paths::APP_NAME;
 use serde_json::Value;
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -67,6 +68,17 @@ pub(crate) fn context() -> tauri::Context<tauri::Wry> {
     tauri::generate_context!()
 }
 
+/// Where an elevated window keeps its WebView2 profile: `admin_only` normally. Under Windows 11's
+/// Administrator Protection WebView2 drops elevation and runs as the signed-in user, who can't
+/// write there ("Microsoft Edge can't read and write to its data directory"), so it gets a
+/// folder in that user's %LOCALAPPDATA% instead; admin-only isn't possible for it there.
+pub(crate) fn webview_dir(admin_only: PathBuf, name: &str) -> PathBuf {
+    match sys::admin_protection_local_app_data() {
+        Some(local) => local.join(APP_NAME).join("WebView2").join(name),
+        None => admin_only,
+    }
+}
+
 pub fn run() -> i32 {
     let result = tauri::Builder::default()
         .manage(Latest::default())
@@ -77,8 +89,10 @@ pub fn run() -> i32 {
             if sys::is_elevated() {
                 // WebView2's profile defaults to %LOCALAPPDATA%, which unelevated programs can
                 // write to (and so plant scripts or preferences in the elevated window).
-                builder =
-                    builder.data_directory(crate::paths::Paths::system().data_dir.join("webview2"));
+                builder = builder.data_directory(webview_dir(
+                    crate::paths::Paths::system().data_dir.join("webview2"),
+                    "settings",
+                ));
             }
             builder
                 .title(APP_NAME)

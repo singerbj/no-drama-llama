@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Windows 11 Administrator Protection.** The setup and settings windows failed with
+  "Microsoft Edge can't read and write to its data directory": WebView2 drops elevation there
+  and runs as the signed-in user, who can't write to the admin-only profile folder. Under
+  Administrator Protection the profile now lives in
+  `%LOCALAPPDATA%\No Drama Llama\WebView2\` of the signed-in user. The logon task and the
+  models folder's permissions also use the signed-in user rather than the hidden admin account.
+
 ## [0.0.2]
 
 ### Added
