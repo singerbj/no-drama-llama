@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Windows 11 Administrator Protection, again.** The setup window could still fail with
+  "Microsoft Edge can't read and write to its data directory" (`C:\Program Files\No Drama
+  Llama\setup-webview2`): 0.0.3 only recognised Administrator Protection when the elevated
+  token's linked token was the signed-in user, which isn't always so. It's now also recognised
+  when the elevated account isn't the one signed in to the Windows session, so WebView2's
+  profile goes to the signed-in user's `%LOCALAPPDATA%`. The logon task and the models folder
+  use that user too.
+
+### Added
+- **Setup window CI.** Windows runners open the setup wizard, elevated both as the signed-in
+  user and as a second admin account, and check that WebView2 starts with a profile folder it
+  can write.
+
 ## [0.0.4]
 
 ### Fixed
