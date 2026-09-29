@@ -26,13 +26,13 @@ use windows::Win32::Storage::FileSystem::CreateDirectoryW;
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
 use windows::Win32::System::RemoteDesktop::{
-    WTSDomainName, WTSFreeMemory, WTSQuerySessionInformationW, WTSUserName,
-    WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTS_INFO_CLASS,
+    WTSDomainName, WTSEnumerateProcessesW, WTSFreeMemory, WTSQuerySessionInformationW, WTSUserName,
+    WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTS_INFO_CLASS, WTS_PROCESS_INFOW,
 };
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
-    CreateMutexW, GetCurrentProcess, GetExitCodeProcess, OpenProcess, OpenProcessToken,
-    ReleaseMutex, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION,
+    CreateMutexW, GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, ReleaseMutex,
+    WaitForSingleObject, INFINITE,
 };
 use windows::Win32::UI::Shell::{
     FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW, KF_FLAG_DEFAULT,
@@ -253,13 +253,23 @@ pub fn shell_user_sid() -> Option<String> {
         if pid == 0 {
             return None;
         }
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut token = HANDLE::default();
-        let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
-        let _ = CloseHandle(process);
-        opened.ok()?;
-        let sid = token_sid(token).ok();
-        let _ = CloseHandle(token);
+        // From the process list rather than its token, which another account's may not open.
+        let mut list: *mut WTS_PROCESS_INFOW = std::ptr::null_mut();
+        let mut count = 0u32;
+        WTSEnumerateProcessesW(Some(WTS_CURRENT_SERVER_HANDLE), 0, 1, &mut list, &mut count)
+            .ok()?;
+        let processes = std::slice::from_raw_parts(list, count as usize);
+        let sid = processes
+            .iter()
+            .find(|p| p.ProcessId == pid && !p.pUserSid.is_invalid())
+            .and_then(|p| {
+                let mut s = PWSTR::null();
+                ConvertSidToStringSidW(p.pUserSid, &mut s).ok()?;
+                let out = s.to_string().ok();
+                let _ = LocalFree(Some(HLOCAL(s.0 as *mut _)));
+                out
+            });
+        WTSFreeMemory(list as *mut _);
         sid
     }
 }
