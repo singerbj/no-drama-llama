@@ -1,6 +1,6 @@
 ---
-title: Laya (decision model)
-description: Run Laya with Ollaya next to the LLM, for fast typed answers to choice, score and yes/no questions.
+title: Decision model (Laya)
+description: Laya, served by Ollaya, runs next to the LLM and gives fast typed answers to choice, score and yes/no questions.
 ---
 
 [Laya](https://ollaya.dev/library/laya) is a *decision model*. Instead of writing text, it reads a
@@ -9,13 +9,19 @@ options, score it on a scale, yes or no. It does that in a single pass, in milli
 calibrated confidence for each answer. [Ollaya](https://ollaya.dev) is the runtime that serves it,
 the way llama.cpp serves the LLM.
 
-No Drama Llama can run Ollaya alongside the LLM. It installs Ollaya, downloads the model, starts
-and stops it with the LLM, and pauses it while you play.
+No Drama Llama runs two kinds of models side by side: the [LLM](/docs/guides/api/), which writes
+text, and the decision model, which answers questions. Use the LLM when you need words, and
+Laya when you need a decision: routing, triage, scoring, yes/no checks.
+
+The decision model is off by default. Once it's on, No Drama Llama installs Ollaya, downloads the
+model, and runs it with the same on/off switch, game pausing, access setting and API key as the
+LLM.
 
 ## Turn it on
 
-- **Settings window:** the **Laya** tab → *Run Laya alongside the LLM* → **Save**.
+- **Settings window:** the **Decision model** tab → *Run Laya alongside the LLM* → **Save**.
 - **Tray:** **Settings → Laya (decision model) → Run Laya alongside the LLM**.
+- **Setup wizard:** turn on Laya on the **Options** page.
 - **Installer:** `no-drama-llama.exe install --laya`.
 
 The first time, the app:
@@ -27,8 +33,9 @@ The first time, the app:
 2. starts `ollaya serve` on port **11435**.
 3. downloads the model (`laya`, about 1 GB) and loads it.
 
-The tray tooltip and the **Laya** tab show each step, with download progress. A popup says
-*Laya ready* when it's done.
+The tray tooltip and the **Decision model** tab show each step, with download progress. A popup
+says *Laya ready* when it's done. The tab then shows Laya's status, its API address and the Ollaya
+version, and the **Overview** tab shows the decision model next to the LLM.
 
 ## Use it
 
@@ -73,8 +80,9 @@ written.
 
 ## Settings
 
-All of them are on the **Laya** tab and in [`settings.json`](/docs/reference/settings/). Saving
-one restarts Laya, which takes a second or two.
+All of them are on the **Decision model** tab (under **Model** and **Server**), in the tray's
+**Laya (decision model)** menu, and in [`settings.json`](/docs/reference/settings/). Saving one
+restarts Laya, which takes a second or two.
 
 | Setting | What it does |
 | --- | --- |
@@ -82,9 +90,9 @@ one restarts Laya, which takes a second or two.
 | **Model** (`LayaModel`) | `laya` picks the English or the multilingual model for each request. `laya:en` (421M) is the fastest; `laya:multilingual` (322M) covers 100+ languages; `laya:typed-decisions` is fine-tuned for typed-decisions workflows. Any other [Ollaya model](https://ollaya.dev/search) works from the settings file, e.g. `nli` or `decider:0.8b`. |
 | **Keep the model loaded** (`LayaKeepAlive`) | *Always* (`-1`, the default), for a time after the last request (`5m`, `30m`, `1h`), or *Unload after each request* (`0`). |
 | **Port** (`LayaPort`) | `11435`. It can't be the LLM's port. |
-| **Run on** (`LayaDevice`) | *Auto* uses the NVIDIA GPU when the GPU pack is installed, else the CPU. *CPU only* never touches the GPU. *NVIDIA GPU only* fails without it. |
+| **Run on** (`LayaDevice`) | *Auto* uses the NVIDIA GPU when the GPU pack is installed, else the CPU. *CPU only* never touches the GPU. *NVIDIA GPU only* fails without it. Ollaya has no AMD or Intel GPU build for Windows yet, so those run on the CPU. |
 
-**Access** and the **API key** are shared with the LLM (**Server & API**). With *Devices on my
+**Access** and the **API key** are shared with the LLM (the **LLM** tab, under **Server**). With *Devices on my
 network*, Ollaya listens on `0.0.0.0` too, and with an API key set, clients send it as
 `Authorization: Bearer <key>` (the TypeSafe SDK sends `TYPESAFE_API_KEY` that way). See
 [Use it from other devices](/docs/guides/network/).
@@ -94,9 +102,9 @@ network*, Ollaya listens on `0.0.0.0` too, and with an API key set, clients send
 Laya follows the LLM:
 
 - **Turn off** (or **Ctrl+Alt+L**) stops both.
-- When a game starts, Laya stops with the LLM so the game gets the GPU, and comes back when the
-  game closes. The model is already downloaded, so it only reloads (a second or two).
-- With **Run on → CPU only**, Laya keeps running while you play, since it uses no VRAM.
+- When a game starts, Laya stops with the LLM, on the GPU or the CPU, so the game gets the whole
+  machine. It comes back when the game closes. The model is already downloaded, so it only
+  reloads (a second or two).
 
 Ollaya's processes never count as a game.
 
@@ -104,7 +112,7 @@ Ollaya's processes never count as a game.
 
 With **Update automatically** on, the app checks Ollaya's releases once a day and installs a
 newer one, keeping the downloaded models. You can also use **Check for Ollaya updates** in the
-tray's Laya menu or on the Laya tab.
+tray's Laya menu or on the **Decision model** tab.
 
 ## Files
 

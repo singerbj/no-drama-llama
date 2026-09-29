@@ -33,3 +33,9 @@ The app doesn't update llama.cpp on its own. To get the latest build:
 ```powershell
 .\no-drama-llama.exe install --update-llama-cpp
 ```
+
+## Ollaya
+
+When the [decision model](/docs/guides/laya/#updates) is on, **Update automatically** also
+checks Ollaya's releases once a day and installs a newer one, keeping the downloaded models.
+**Check for Ollaya updates** on the **Decision model** tab checks now.

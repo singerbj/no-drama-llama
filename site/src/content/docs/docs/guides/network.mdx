@@ -1,16 +1,19 @@
 ---
 title: Use it from other devices
-description: Share the model with your laptop, phone or home server, safely.
+description: Share the LLM and the decision model with your laptop, phone or home server, safely.
 ---
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 
-By default the server only listens on `127.0.0.1`, so only this PC can use it. To use it from
-other devices on your network:
+By default the LLM and the decision model only listen on `127.0.0.1`, so only this PC can use
+them. **Access** and the **API key** apply to both, so one change opens up both. To use them
+from other devices on your network:
 
 <Steps>
 
-1. **Set an API key.** Choose **Settings → Edit settings file** and set `ApiKey`, for example:
+1. **Set an API key.** In the settings window, open the **LLM** tab and fill in **API key**
+   under **Server**. Or choose **Settings → Edit settings file** in the tray and set `ApiKey`,
+   for example:
 
    ```json
    "ApiKey": "pick-a-long-random-string"
@@ -18,26 +21,33 @@ other devices on your network:
 
    It can be up to 128 characters of letters, digits, `.`, `_`, `-` and `~`.
 
-2. **Open it up.** Choose **Settings → Access → Devices on my network**. The server restarts
-   listening on `0.0.0.0`.
+2. **Open it up.** Set **Access** to **Devices on my network**, on the **LLM** tab or under
+   **Settings → Access** in the tray. The LLM (and Laya, when it's on) restarts listening on
+   `0.0.0.0`.
 
 3. **Allow it through the firewall** if Windows asks, for private networks only.
 
-4. **Connect** from the other device to `http://<this-pc's-name-or-IP>:8080/v1`, sending
-   `Authorization: Bearer <your key>`. OpenAI SDKs send it when you pass `apiKey`.
+4. **Connect** from the other device, sending `Authorization: Bearer <your key>`:
+   - the LLM at `http://<this-pc's-name-or-IP>:8080/v1`. OpenAI SDKs send the key when you pass
+     `apiKey`.
+   - the decision model at `http://<this-pc's-name-or-IP>:11435`. The TypeSafe SDK sends
+     `TYPESAFE_API_KEY` that way.
 
 </Steps>
 
 <Aside type="danger">
-Without an `ApiKey`, anyone on your network can use the model. Never forward port 8080 on your
-router: put a VPN such as WireGuard or Tailscale in front of it instead.
+Without an `ApiKey`, anyone on your network can use the models. Never forward port 8080 or
+11435 on your router: put a VPN such as WireGuard or Tailscale in front of them instead.
 </Aside>
 
-Laya, when it's on, follows the same **Access** and API key on its own port (`LayaPort`, `11435`
-by default). Allow that port through the firewall too if other devices use it. See
-[Laya](/docs/guides/laya/).
+The decision model has its own port (`LayaPort`, `11435` by default). Allow it through the
+firewall too if other devices use it. See [Decision model (Laya)](/docs/guides/laya/).
 
-## Change the port
+## Change the ports
 
-Set `Port` (1024 – 65535) in the [settings file](/docs/reference/settings/). The default is
-`8080`.
+- **LLM:** **Port** on the **LLM** tab (under **Server**), or `Port` in the
+  [settings file](/docs/reference/settings/). The default is `8080`.
+- **Decision model:** **Port** on the **Decision model** tab (under **Server**), or `LayaPort`.
+  The default is `11435`, and it can't be the LLM's port.
+
+Both take 1024 – 65535.
