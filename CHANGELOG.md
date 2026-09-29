@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.0.7]
+
 ### Fixed
 - **No console window after setup.** Once the setup window closed, a console window running
   `ping` popped up for a few seconds: the step that deletes setup's leftover files after it
