@@ -13,8 +13,9 @@ on:
 permissions:
   contents: read
 
+# As in ci.yml: runs on main are never cancelled (the deploy job skips itself when stale).
 concurrency:
-  group: site-${{ github.ref }}
+  group: site-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -58,11 +59,31 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pages: write
       id-token: write
+    # One deploy at a time, and never cancelled.
+    concurrency:
+      group: site-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Runs on main aren't cancelled and push events can arrive out of order, so an older
+      # commit's run may reach this point last. Deploy only if main hasn't changed the site since.
+      - name: Check this is still main's latest site
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          changed=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...main" --jq '.files[].filename')
+          if printf '%s\n' "$changed" | grep -Eq '^(site/|design/|docs/|CHANGELOG\.md$|\.github/workflows/site\.yml$)'; then
+            echo "::notice::main has changed the site since $GITHUB_SHA; the newer commit's run deploys it."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
       - id: deployment
+        if: steps.current.outputs.deploy == 'true'
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
