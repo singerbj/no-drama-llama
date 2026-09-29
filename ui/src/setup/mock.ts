@@ -117,7 +117,7 @@ export function sampleSurvey(): Survey {
         id: "port",
         title: "Port 8080 is in use",
         status: "warn",
-        detail: "Another program uses it. After installing, pick another port in Settings → Server & API.",
+        detail: "Another program uses it. After installing, pick another port in Settings → LLM.",
       },
       { id: "power", title: "Desktop PC", status: "pass", detail: "Can stay on as a local AI server." },
     ],

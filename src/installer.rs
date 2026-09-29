@@ -291,7 +291,7 @@ pub fn port_check(port: u16, free: bool) -> Check {
             "port",
             format!("Port {port} is in use"),
             Status::Warn,
-            "Another program uses it. After installing, pick another port in Settings → Server & API.",
+            "Another program uses it. After installing, pick another port in Settings → LLM.",
         )
     }
 }

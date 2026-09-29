@@ -4,7 +4,7 @@ function Demo(){
 const [t,setT]=React.useState('overview');
 return <div style={{border:'1px solid var(--border)',borderRadius:10,overflow:'hidden',background:'var(--bg)'}}>
 <StatusHeader tone="running" title="Running - Qwen3.8-27B-UD-Q4_K_XL · 64K context" subtitle="Chat and API at http://127.0.0.1:8080" actions={<><Button>Turn off</Button><Button variant="primary">Open chat</Button></>}/>
-<div style={{display:'flex'}}><SideNav items={[{id:'overview',title:'Overview'},{id:'model',title:'Model'},{id:'server',title:'Server & API'},{id:'games',title:'Game detection'}]} active={t} onSelect={setT}/>
+<div style={{display:'flex'}}><SideNav items={[{id:'overview',title:'Overview'},{id:'llm',title:'LLM'},{id:'decision',title:'Decision model'},{id:'games',title:'Game detection'}]} active={t} onSelect={setT}/>
 <div style={{flex:1,padding:'12px 20px'}}><FactList items={[['GPU','NVIDIA GeForce RTX 4090 (24 GB)'],['llama.cpp build','CUDA 13'],['Context in use','64K tokens']]}/>
 <Fieldset legend="On-screen popups"><SettingRow label="Show popups" hint="When the model pauses or resumes." last><Switch checked/></SettingRow></Fieldset></div></div></div>;}
 ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);</script></body></html>
