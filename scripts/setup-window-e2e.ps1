@@ -34,7 +34,7 @@ public static class TopWindows {
             uint pid; GetWindowThreadProcessId(h, out pid);
             all.Add(pid + "\t" + s);
             return true;
-        });
+        }, IntPtr.Zero);
         return all;
     }
 }
