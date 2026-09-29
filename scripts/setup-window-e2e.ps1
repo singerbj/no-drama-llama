@@ -94,7 +94,7 @@ if ($AsOtherAdmin) {
 $deadline = (Get-Date).AddSeconds(90)
 $errorDialog = $null
 while ((Get-Date) -lt $deadline) {
-    $errorDialog = Titles | Where-Object Title -Match "couldn't create the data directory|can't read and write"
+    $errorDialog = Titles | Where-Object Title -Match 'couldn.t create the data directory|can.t read and write'
     if ($errorDialog -or (Test-Path (Join-Path $expect 'EBWebView\Local State'))) { break }
     Start-Sleep 2
 }
