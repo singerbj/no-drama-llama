@@ -14,8 +14,9 @@ All notable changes to this project are documented here. The format follows
   `C:\LLM\data\webview2`), so the setup and settings windows failed on most PCs. Those folders
   now also give write access to the account Explorer runs as, and nobody else unelevated.
   CI missed it because runners sign in as the built-in Administrator, whose Explorer is
-  elevated: it now restarts Explorer unelevated and checks that WebView2 runs unelevated
-  before opening both windows.
+  elevated. CI now runs Explorer as an ordinary admin account with UAC's filtered token and
+  opens both windows elevated by UAC and as another admin, checking that WebView2 runs
+  unelevated and starts without the error (0.0.5 fails all of these).
 
 ## [0.0.5]
 

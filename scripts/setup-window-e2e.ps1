@@ -76,9 +76,13 @@ public static class TopWindows {
 
 function Titles { [TopWindows]::List() | ForEach-Object { $p, $t = $_ -split "`t", 2; [pscustomobject]@{ Pid = [int]$p; Title = $t } } }
 
+# `DOMAIN\user` of a process, or nothing once it's gone (WebView2's come and go).
 function Owner($processId) {
-    $p = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
-    if ($p) { $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner; if ($o.User) { "$($o.Domain)\$($o.User)" } }
+    try {
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
+        $o = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction Stop
+        if ($o.User) { "$($o.Domain)\$($o.User)" }
+    } catch {}
 }
 
 function Sid($account) { (New-Object Security.Principal.NTAccount $account).Translate([Security.Principal.SecurityIdentifier]).Value }

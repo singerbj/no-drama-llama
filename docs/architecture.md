@@ -115,8 +115,9 @@ opens the setup wizard: the same exe with `setup`, a Tauri window showing `ui/se
   `%ProgramFiles%\No Drama Llama\setup-webview2` (removed after exit), writable only by SYSTEM,
   administrators and the account Explorer runs as, rather than in an admin-only folder it
   couldn't write or the elevated account's `%LOCALAPPDATA%`. The settings window does the same
-  with `C:\LLM\data\webview2`. CI restarts Explorer unelevated before opening both windows,
-  since a runner's built-in Administrator has an elevated Explorer. The page
+  with `C:\LLM\data\webview2`. CI runs Explorer as an ordinary admin account with UAC's
+  filtered token before opening both windows, since a runner's built-in Administrator has an
+  elevated Explorer. The page
   only reaches its own commands, and nothing listens on a port.
 - **Closing** mid-install asks first; stopping keeps finished and partial downloads.
 - `setup.log` (in `C:\LLM\data`) keeps each run's steps and errors.
