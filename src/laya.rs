@@ -60,9 +60,10 @@ pub const KEEP_ALIVE_PRESETS: [(&str, &str); 5] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Device {
-    /// The NVIDIA GPU when the GPU pack is installed, else the CPU
+    /// The NVIDIA GPU when the GPU pack is installed, else the CPU. Ollaya has no AMD or Intel
+    /// GPU build for Windows, so those run on the CPU.
     Auto,
-    /// Never the GPU: Laya keeps running while you play
+    /// Never the GPU
     Cpu,
     /// The NVIDIA GPU, or fail
     Cuda,
@@ -70,8 +71,8 @@ pub enum Device {
 
 impl Device {
     pub const ALL: [(Device, &'static str); 3] = [
-        (Device::Auto, "Auto (NVIDIA GPU if there is one)"),
-        (Device::Cpu, "CPU only (keeps running while gaming)"),
+        (Device::Auto, "Auto (NVIDIA GPU if there is one, else CPU)"),
+        (Device::Cpu, "CPU only"),
         (Device::Cuda, "NVIDIA GPU only"),
     ];
 
@@ -241,11 +242,6 @@ pub fn wants_gpu_pack(nvidia: &[NvidiaGpu], device: Device) -> bool {
         && nvidia
             .iter()
             .any(|g| g.driver_major >= 580 && g.compute_cap >= 7.5)
-}
-
-/// Whether Laya holds GPU memory, and so has to stop while a game runs.
-pub fn uses_gpu(device: Device) -> bool {
-    device != Device::Cpu
 }
 
 // ------------------------------------------------------------------ install
@@ -870,7 +866,6 @@ mod tests {
         }
         assert_eq!(Device::parse("CUDA"), None);
         assert_eq!(Device::parse("metal"), None);
-        assert!(uses_gpu(Device::Auto) && uses_gpu(Device::Cuda) && !uses_gpu(Device::Cpu));
     }
 
     #[test]
@@ -1240,7 +1235,7 @@ mod tests {
     }
 
     #[test]
-    fn stops_for_games_and_off_unless_on_the_cpu() {
+    fn stops_for_games_and_off() {
         let mut s = Sim::new();
         s.until_ready();
         s.i.hold = Hold::Game;

@@ -158,7 +158,7 @@ twice, and report Running only when `/health` says ready.
 
 ```
   RunLaya off ──► Disabled        settings problem (port clash) ──► Error
-  off.flag ──► Off                LLM Paused and LayaDevice ≠ cpu ──► Paused     (daemon killed)
+  off.flag ──► Off                LLM Paused                  ──► Paused     (daemon killed)
   not installed / GPU pack wanted / update ──► Installing (job) ──► Starting ──► GET / = 200
       ──► model not in /api/tags ──► Downloading (job: POST /api/pull, NDJSON progress)
       ──► not loaded ──► Loading (job: POST /api/decide without state = load + keep_alive)

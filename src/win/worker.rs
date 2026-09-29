@@ -664,14 +664,13 @@ impl Worker {
         });
     }
 
-    /// Runs Laya's state machine: after the LLM's, so it follows the same off switch and pause.
+    /// Runs Laya's state machine: after the LLM's, so it follows the same off switch and pause
+    /// (on the CPU too: a game gets the CPU as well as the GPU).
     fn tick_laya(&mut self, off: bool) {
         let s = &self.s;
         let hold = if off {
             Hold::Off
-        } else if matches!(self.machine.status(), Status::Paused(_))
-            && laya::uses_gpu(s.laya_device)
-        {
+        } else if matches!(self.machine.status(), Status::Paused(_)) {
             Hold::Game
         } else {
             Hold::None

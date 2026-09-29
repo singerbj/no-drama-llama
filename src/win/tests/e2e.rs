@@ -402,19 +402,13 @@ fn laya_runs_alongside_the_llm() {
     assert_eq!(snap.laya.version.as_deref(), Some("0.5.0"));
     assert_eq!(h.laya_pids().len(), 1);
 
-    // 2. A game: the LLM pauses; Laya on the CPU keeps running
+    // 2. A game: Laya pauses with the LLM, even on the CPU, and comes back when the game closes
     let game_exe = h.p.root.join("games").join("ndl-fake-game.exe");
     copy_exe(&example_exe("fake_llama_server"), &game_exe);
     let mut game = std::process::Command::new(&game_exe).spawn().unwrap();
     h.until("paused", |s| matches!(s, Status::Paused(_)));
-    h.tick();
-    assert_eq!(h.last.as_ref().unwrap().laya.status, L::Ready);
-    assert_eq!(h.laya_pids().len(), 1);
-
-    // 3. On the GPU it pauses with the LLM, and comes back when the game closes
-    h.cmd(Cmd::Edit(Box::new(|s| s.laya_device = Device::Auto)));
     h.until_laya("paused", |l| *l == L::Paused);
-    assert!(h.laya_pids().is_empty(), "GPU freed");
+    assert!(h.laya_pids().is_empty(), "the game gets the machine");
     game.kill().unwrap();
     let _ = game.wait();
     h.until_laya("ready after the game", |l| *l == L::Ready);
@@ -424,21 +418,21 @@ fn laya_runs_alongside_the_llm() {
         "not downloaded again"
     );
 
-    // 4. A new model is pulled; the old one stays
+    // 3. A new model is pulled; the old one stays
     h.cmd(Cmd::Edit(Box::new(|s| s.laya_model = "laya:en".into())));
     h.until_laya("ready with laya:en", |l| *l == L::Ready);
     assert!(std::fs::read_to_string(store.join("pulled.txt"))
         .unwrap()
         .contains("laya:en\n"));
 
-    // 5. The off switch covers Laya too
+    // 4. The off switch covers Laya too
     h.cmd(Cmd::Toggle);
     h.until_laya("off", |l| *l == L::Off);
     assert!(h.laya_pids().is_empty());
     h.cmd(Cmd::Toggle);
     h.until_laya("on again", |l| *l == L::Ready);
 
-    // 6. A model the registry doesn't have: an error that says why, retried later
+    // 5. A model the registry doesn't have: an error that says why, retried later
     h.cmd(Cmd::Edit(Box::new(|s| s.laya_model = "missing".into())));
     h.until_laya(
         "pull error",
@@ -446,7 +440,7 @@ fn laya_runs_alongside_the_llm() {
     );
     assert!(h.popups.contains(&"Laya error".to_string()));
 
-    // 7. Keeps crashing: an error; Restart Laya tries again
+    // 6. Keeps crashing: an error; Restart Laya tries again
     h.cmd(Cmd::Edit(Box::new(|s| s.laya_model = "laya".into())));
     std::fs::write(h.p.ollaya_exe.with_file_name("crash"), b"").unwrap();
     h.w.stop_laya("test");
@@ -458,7 +452,7 @@ fn laya_runs_alongside_the_llm() {
     h.cmd(Cmd::RestartLaya);
     h.until_laya("ready after restart", |l| *l == L::Ready);
 
-    // 8. The LLM's port: a settings problem, nothing started
+    // 7. The LLM's port: a settings problem, nothing started
     let llm_port = h.last.as_ref().unwrap().settings.port;
     h.cmd(Cmd::Edit(Box::new(move |s| s.laya_port = llm_port)));
     h.until_laya(
@@ -467,7 +461,7 @@ fn laya_runs_alongside_the_llm() {
     );
     assert!(h.laya_pids().is_empty());
 
-    // 9. Turned off in settings: stopped
+    // 8. Turned off in settings: stopped
     h.cmd(Cmd::Edit(Box::new(move |s| {
         s.laya_port = laya_port;
         s.run_laya = false;
