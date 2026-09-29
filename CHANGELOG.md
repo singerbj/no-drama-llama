@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.0.5]
+
 ### Fixed
 - **Windows 11 Administrator Protection, again.** The setup window could still fail with
   "Microsoft Edge can't read and write to its data directory" (`C:\Program Files\No Drama
