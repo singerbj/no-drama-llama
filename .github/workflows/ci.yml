@@ -265,6 +265,37 @@ jobs:
           if (Get-Process no-drama-llama, llama-server -ErrorAction SilentlyContinue) { throw 'processes left running' }
           try { Invoke-WebRequest http://127.0.0.1:8080/health -TimeoutSec 5 | Out-Null; throw 'port 8080 still answering' } catch [System.Net.Http.HttpRequestException] {}
 
+  setup-window-e2e:
+    name: Setup window opens (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: [rust-build]
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: no-drama-llama-exe
+      - name: Elevated as the signed-in user (UAC)
+        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -Screenshot uac.png
+      - name: Elevated as another admin account (as under Administrator Protection)
+        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -AsOtherAdmin -Screenshot other-admin.png
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: setup-window-${{ matrix.os }}
+          path: "*.png"
+          if-no-files-found: ignore
+
   rust-audit:
     name: Dependency advisories
     runs-on: ubuntu-latest

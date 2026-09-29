@@ -16,15 +16,19 @@ use windows::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
 };
 use windows::Win32::Security::{
-    GetSecurityDescriptorDacl, GetTokenInformation, TokenElevation, TokenElevationType,
-    TokenElevationTypeFull, TokenLinkedToken, TokenUser, DACL_SECURITY_INFORMATION,
-    OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-    SECURITY_ATTRIBUTES, TOKEN_ELEVATION, TOKEN_ELEVATION_TYPE, TOKEN_LINKED_TOKEN, TOKEN_QUERY,
-    TOKEN_USER,
+    GetSecurityDescriptorDacl, GetTokenInformation, LookupAccountNameW, TokenElevation,
+    TokenElevationType, TokenElevationTypeFull, TokenLinkedToken, TokenUser,
+    DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SID_NAME_USE, TOKEN_ELEVATION,
+    TOKEN_ELEVATION_TYPE, TOKEN_LINKED_TOKEN, TOKEN_QUERY, TOKEN_USER,
 };
 use windows::Win32::Storage::FileSystem::CreateDirectoryW;
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
+use windows::Win32::System::RemoteDesktop::{
+    WTSDomainName, WTSFreeMemory, WTSQuerySessionInformationW, WTSUserName,
+    WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTS_INFO_CLASS,
+};
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
     CreateMutexW, GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, ReleaseMutex,
@@ -70,17 +74,13 @@ pub fn is_elevated() -> bool {
 /// SID of the signed-in user (e.g. `S-1-5-21-...`), also when elevated: through UAC or under
 /// Administrator Protection, where the elevated process runs as a separate hidden admin account.
 pub fn current_user_sid() -> Result<String> {
+    if let Some(user) = other_signed_in_user() {
+        return Ok(user.sid);
+    }
     unsafe {
         let mut token = HANDLE::default();
         OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)?;
-        let r = match admin_protection_token(token) {
-            Some(linked) => {
-                let r = token_sid(linked);
-                let _ = CloseHandle(linked);
-                r
-            }
-            None => token_sid(token),
-        };
+        let r = token_sid(token);
         let _ = CloseHandle(token);
         r
     }
@@ -105,10 +105,10 @@ unsafe fn token_sid(token: HANDLE) -> Result<String> {
     Ok(out)
 }
 
-/// The signed-in user's token (to close) when `token` is elevated under Windows 11's
-/// Administrator Protection: the elevated process then runs as a hidden admin account, whose
-/// linked token is the signed-in user. With plain UAC both tokens are the same user: `None`.
-unsafe fn admin_protection_token(token: HANDLE) -> Option<HANDLE> {
+/// The signed-in user's token (to close) when `token` is elevated and its linked token is
+/// another user, as Administrator Protection may set it up. With plain UAC both tokens are the
+/// same user: `None`.
+unsafe fn linked_token_of_other_user(token: HANDLE) -> Option<HANDLE> {
     let mut kind = TOKEN_ELEVATION_TYPE::default();
     let mut len = 0u32;
     GetTokenInformation(
@@ -140,38 +140,132 @@ unsafe fn admin_protection_token(token: HANDLE) -> Option<HANDLE> {
     }
 }
 
-/// The signed-in user's `%LOCALAPPDATA%` when this process is elevated under Administrator
-/// Protection, else `None`. WebView2 drops elevation there and runs as the signed-in user, so
-/// it can't use a profile folder only admins (or the hidden admin account) can write to.
-pub fn admin_protection_local_app_data() -> Option<PathBuf> {
+/// `DOMAIN\user` signed in to this process's Windows session, if any (none in session 0).
+pub fn session_user_name() -> Option<String> {
+    unsafe fn query(class: WTS_INFO_CLASS) -> Option<String> {
+        let mut buf = PWSTR::null();
+        let mut len = 0u32;
+        WTSQuerySessionInformationW(
+            Some(WTS_CURRENT_SERVER_HANDLE),
+            WTS_CURRENT_SESSION,
+            class,
+            &mut buf,
+            &mut len,
+        )
+        .ok()?;
+        let out = buf.to_string().ok();
+        WTSFreeMemory(buf.0 as *mut _);
+        out.filter(|s| !s.is_empty())
+    }
+    unsafe {
+        let user = query(WTSUserName)?;
+        Some(match query(WTSDomainName) {
+            Some(domain) => format!(r"{domain}\{user}"),
+            None => user,
+        })
+    }
+}
+
+/// SID (e.g. `S-1-5-21-...`) of an account name such as `DOMAIN\user`.
+pub fn account_sid(name: &str) -> Result<String> {
+    let name = wide(name);
+    unsafe {
+        let (mut sid_len, mut domain_len) = (0u32, 0u32);
+        let mut kind = SID_NAME_USE::default();
+        let _ = LookupAccountNameW(
+            PCWSTR::null(),
+            PCWSTR(name.as_ptr()),
+            None,
+            &mut sid_len,
+            None,
+            &mut domain_len,
+            &mut kind,
+        );
+        if sid_len == 0 {
+            bail!("unknown account");
+        }
+        let mut sid = vec![0u64; (sid_len as usize).div_ceil(8)];
+        let mut domain = vec![0u16; domain_len.max(1) as usize];
+        LookupAccountNameW(
+            PCWSTR::null(),
+            PCWSTR(name.as_ptr()),
+            Some(PSID(sid.as_mut_ptr() as *mut _)),
+            &mut sid_len,
+            Some(PWSTR(domain.as_mut_ptr())),
+            &mut domain_len,
+            &mut kind,
+        )?;
+        let mut s = PWSTR::null();
+        ConvertSidToStringSidW(PSID(sid.as_mut_ptr() as *mut _), &mut s)?;
+        let out = s.to_string()?;
+        let _ = LocalFree(Some(HLOCAL(s.0 as *mut _)));
+        Ok(out)
+    }
+}
+
+/// The user signed in to Windows, when this elevated process runs as another account.
+pub struct OtherUser {
+    pub sid: String,
+    /// Their `%LOCALAPPDATA%`
+    pub local_app_data: Option<PathBuf>,
+}
+
+/// The signed-in user when this process is elevated as another account, else `None` (plain UAC
+/// elevates the signed-in user themselves). Windows 11's Administrator Protection runs elevated
+/// processes as a hidden admin account, and WebView2 then drops elevation and runs as the
+/// signed-in user. Some builds make that user the elevated token's linked token; the session's
+/// user it always is (and it's also how over-the-shoulder elevation by another admin looks).
+pub fn other_signed_in_user() -> Option<OtherUser> {
+    if !is_elevated() {
+        return None;
+    }
     unsafe {
         let mut token = HANDLE::default();
         OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
-        let linked = admin_protection_token(token);
+        let me = token_sid(token);
+        let linked = linked_token_of_other_user(token);
         let _ = CloseHandle(token);
-        let linked = linked?;
-        let known = SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DEFAULT, Some(linked))
-            .ok()
-            .and_then(|p| {
-                let out = p.to_string().ok().map(PathBuf::from);
-                CoTaskMemFree(Some(p.0 as *const _));
-                out
-            });
-        let sid = token_sid(linked).ok();
-        let _ = CloseHandle(linked);
-        // The linked token may be too weak for the shell: fall back to the profile's default.
-        known.or_else(|| {
-            let profile: String = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
-                .open_subkey(format!(
-                    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{}",
-                    sid?
-                ))
-                .ok()?
-                .get_value("ProfileImagePath")
-                .ok()?;
-            Some(PathBuf::from(profile).join(r"AppData\Local"))
+        if let Some(linked) = linked {
+            let sid = token_sid(linked).ok();
+            let known = SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DEFAULT, Some(linked))
+                .ok()
+                .and_then(|p| {
+                    let out = p.to_string().ok().map(PathBuf::from);
+                    CoTaskMemFree(Some(p.0 as *const _));
+                    out
+                });
+            let _ = CloseHandle(linked);
+            if let Some(sid) = sid {
+                // The linked token may be too weak for the shell: fall back to the profile's.
+                let local_app_data = known.or_else(|| profile_local_app_data(&sid));
+                return Some(OtherUser {
+                    sid,
+                    local_app_data,
+                });
+            }
+        }
+        let sid = account_sid(&session_user_name()?).ok()?;
+        if me.ok()? == sid {
+            return None;
+        }
+        let local_app_data = profile_local_app_data(&sid);
+        Some(OtherUser {
+            sid,
+            local_app_data,
         })
     }
+}
+
+/// `AppData\Local` in the profile folder of the account `sid`.
+pub fn profile_local_app_data(sid: &str) -> Option<PathBuf> {
+    let profile: String = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+        .open_subkey(format!(
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}"
+        ))
+        .ok()?
+        .get_value("ProfileImagePath")
+        .ok()?;
+    Some(PathBuf::from(profile).join(r"AppData\Local"))
 }
 
 /// SYSTEM, Administrators and TrustedInstaller: the owners a folder the elevated app runs

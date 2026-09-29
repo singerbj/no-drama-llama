@@ -113,7 +113,9 @@ opens the setup wizard: the same exe with `setup`, a Tauri window showing `ui/se
   (`%ProgramFiles%\No Drama Llama\setup-webview2`, removed after exit) instead of
   `%LOCALAPPDATA%`. Under Windows 11's Administrator Protection WebView2 drops elevation and
   runs as the signed-in user, so the profile goes to that user's
-  `%LOCALAPPDATA%\No Drama Llama\WebView2\setup` instead (removed after exit too). The page
+  `%LOCALAPPDATA%\No Drama Llama\WebView2\setup` instead (removed after exit too). That's
+  detected as an elevated process whose account isn't the Windows session's signed-in user
+  (or whose linked token is another user). The page
   only reaches its own commands, and nothing listens on a port.
 - **Closing** mid-install asks first; stopping keeps finished and partial downloads.
 - `setup.log` (in `C:\LLM\data`) keeps each run's steps and errors.

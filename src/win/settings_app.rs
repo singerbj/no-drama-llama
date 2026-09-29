@@ -69,11 +69,12 @@ pub(crate) fn context() -> tauri::Context<tauri::Wry> {
 }
 
 /// Where an elevated window keeps its WebView2 profile: `admin_only` normally. Under Windows 11's
-/// Administrator Protection WebView2 drops elevation and runs as the signed-in user, who can't
-/// write there ("Microsoft Edge can't read and write to its data directory"), so it gets a
-/// folder in that user's %LOCALAPPDATA% instead; admin-only isn't possible for it there.
+/// Administrator Protection the window runs as a hidden admin account, WebView2 drops elevation
+/// and runs as the signed-in user, who can't write there ("Microsoft Edge can't read and write
+/// to its data directory"), so it gets a folder in that user's %LOCALAPPDATA% instead;
+/// admin-only isn't possible for it there.
 pub(crate) fn webview_dir(admin_only: PathBuf, name: &str) -> PathBuf {
-    match sys::admin_protection_local_app_data() {
+    match sys::other_signed_in_user().and_then(|u| u.local_app_data) {
         Some(local) => local.join(APP_NAME).join("WebView2").join(name),
         None => admin_only,
     }
