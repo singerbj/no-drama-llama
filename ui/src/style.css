@@ -269,6 +269,10 @@ fieldset > .row:last-child {
   padding-top: 10px;
 }
 
+.engine-actions {
+  margin-bottom: 14px;
+}
+
 .inline {
   display: flex;
   gap: 8px;

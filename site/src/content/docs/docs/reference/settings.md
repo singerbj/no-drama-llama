@@ -3,9 +3,9 @@ title: Settings file
 description: Every key in settings.json, with defaults and allowed values.
 ---
 
-Everything in the tray menu is saved to `C:\LLM\data\settings.json`. You can also edit the file
+Everything in the tray menu and the settings window is saved to `C:\LLM\data\settings.json`. You can also edit the file
 by hand (**Settings → Edit settings file**), and changes apply within a few seconds, restarting
-the server if needed.
+the LLM or the decision model if needed.
 
 Invalid values are ignored, and the default is used instead. Each one is logged in
 `C:\LLM\data\tray.log`. Key names aren't case-sensitive.
@@ -17,9 +17,9 @@ Invalid values are ignored, and the default is used instead. Each one is logged 
 | `Model` | `Qwen3.8-27B-UD-Q4_K_XL.gguf` | A `.gguf` file name in `C:\LLM\models` |
 | `Reasoning` | `low` | `none` · `low` · `medium` · `xhigh` |
 | `Context` | `auto` | `auto` = the largest that fits your GPU, or a number of tokens (512 – 1048576) |
-| `ListenHost` | `127.0.0.1` | `127.0.0.1`, or `0.0.0.0` to make it reachable from your network |
-| `Port` | `8080` | 1024 – 65535 |
-| `ApiKey` | *(empty)* | Up to 128 of `A–Z a–z 0–9 . _ - ~`. If set, clients must send `Authorization: Bearer <key>`. |
+| `ListenHost` | `127.0.0.1` | `127.0.0.1`, or `0.0.0.0` to make the LLM and the decision model reachable from your network |
+| `Port` | `8080` | 1024 – 65535. The LLM's port. |
+| `ApiKey` | *(empty)* | Up to 128 of `A–Z a–z 0–9 . _ - ~`. If set, clients of the LLM and the decision model must send `Authorization: Bearer <key>`. |
 | `PauseWhileGaming` | `true` | `true` · `false` |
 | `DetectionMode` | `Both` | `Both` · `Gpu` · `Launchers` |
 | `GpuVramGB` | `1.5` | 0.1 – 256. Pause when another app uses this much VRAM on 2 checks in a row. |
@@ -33,10 +33,10 @@ Invalid values are ignored, and the default is used instead. Each one is logged 
 | `PopupPosition` | `TopCenter` | `TopCenter` · `TopRight` · `BottomRight` · `BottomCenter` |
 | `AutoUpdate` | `true` | `true` · `false`. Install signed updates automatically (and newer Ollaya releases when Laya is on). |
 | `StartWithWindows` | `true` | `true` · `false`. Start the app when you sign in. |
-| `RunLaya` | `false` | `true` · `false`. Run [Laya](/docs/guides/laya/) (Ollaya) alongside the LLM. |
+| `RunLaya` | `false` | `true` · `false`. Run the [decision model](/docs/guides/laya/) (Laya, served by Ollaya) alongside the LLM. |
 | `LayaModel` | `laya` | An Ollaya model name: `laya`, `laya:en`, `laya:multilingual`, `laya:typed-decisions`, or another [Ollaya model](https://ollaya.dev/search) (`name`, `name:tag`, `namespace/name:tag`) |
-| `LayaPort` | `11435` | 1024 – 65535, not the same as `Port` |
-| `LayaDevice` | `auto` | `auto` · `cpu` · `cuda`. With `cpu`, Laya keeps running while you play. |
+| `LayaPort` | `11435` | 1024 – 65535, not the same as `Port`. The decision model's port. |
+| `LayaDevice` | `auto` | `auto` · `cpu` · `cuda`. `auto` uses an NVIDIA GPU when there is one, else the CPU (AMD and Intel GPUs aren't supported by Ollaya yet). |
 | `LayaKeepAlive` | `-1` | How long the model stays loaded after a request: `-1` = always, a duration (`5m`, `1h30m`), a number of seconds, or `0` = unload right away |
 | `SendCrashReports` | `false` | `true` · `false`. Send scrubbed crash reports. See [Privacy](/docs/guides/privacy/). |
 | `ShareUsageStats` | `false` | `true` · `false`. Send anonymous usage statistics. See [Privacy](/docs/guides/privacy/). |

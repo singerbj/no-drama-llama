@@ -1,11 +1,11 @@
 ---
 title: Chat and API
-description: Use the built-in chat UI, or connect OpenAI-compatible clients, SDKs and tools.
+description: Use the LLM's built-in chat UI, or connect OpenAI-compatible clients, SDKs and tools.
 ---
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-No Drama Llama runs llama.cpp's `llama-server`, which serves:
+The LLM runs in llama.cpp's `llama-server`, which serves:
 
 | | |
 | --- | --- |
@@ -13,7 +13,11 @@ No Drama Llama runs llama.cpp's `llama-server`, which serves:
 | **OpenAI-compatible API** | `http://127.0.0.1:8080/v1` |
 | **Health check** | `http://127.0.0.1:8080/health` |
 
-Only one model is loaded at a time, so the `model` field in requests can be anything.
+Only one LLM is loaded at a time, so the `model` field in requests can be anything. The
+**LLM** tab of the settings window shows the API address and whether it's running.
+
+For typed answers (pick an option, a score, yes or no) rather than text, ask the
+[decision model](/docs/guides/laya/#use-it) at `http://127.0.0.1:11435/api/decide`.
 
 ## Examples
 
@@ -77,9 +81,9 @@ Most editors, agents and chat front-ends have an "OpenAI-compatible" provider op
 
 ## Reasoning
 
-Qwen 3.8 can think before it answers. Set how much from the tray under
-**Settings → Reasoning**: `none`, `low` (the default), `medium` or `xhigh`. The server restarts
-to apply it. llama.cpp returns the model's thinking separately from the answer, so clients that
+Qwen 3.8 can think before it answers. Set how much with **Reasoning** on the **LLM** tab (under
+**Generation**) or **Settings → Reasoning** in the tray: `none`, `low` (the default), `medium`
+or `xhigh`. The LLM restarts to apply it. llama.cpp returns the model's thinking separately from the answer, so clients that
 don't show it only see the final reply.
 
 Reasoning and Qwen's recommended sampling settings are only applied to Qwen models. Other
@@ -98,7 +102,8 @@ fastest replies and the most context. Other requests queue.
 
 ## Context length
 
-With **Settings → Context length → Auto** (the default), llama.cpp uses the largest context that
-fits your GPU. The tray's status line shows what it chose. Pick a fixed size from the menu or
+With **Context length** set to **Auto** (the default, on the **LLM** tab or under
+**Settings → Context length** in the tray), llama.cpp uses the largest context that fits your
+GPU. The tray's status line and *Context in use* on the **LLM** tab show what it chose. Pick a fixed size from the menu or
 set `Context` in the [settings file](/docs/reference/settings/) if you need a smaller one to
 leave VRAM for other apps.

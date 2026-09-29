@@ -4,7 +4,7 @@
 import type { ReactNode } from "react";
 import { Choice, ContextField, ListField, ModelPicker, NumberField, TextField, Toggle, gb, Row } from "./fields";
 import { useForm } from "./form";
-import type { CatalogEntry, Request } from "./types";
+import type { CatalogEntry, DownloadView, Request } from "./types";
 
 type Cmd = Extract<Request, { cmd: string }>["cmd"];
 
@@ -34,19 +34,50 @@ function Fieldset({ legend, disabled, children }: { legend?: string; disabled?: 
   );
 }
 
+// ---------------------------------------------------------------- Shared by the LLM and the decision model
+
+/** A model server's status block: its state, then the facts particular to it. */
+function Status({ tone, text, children }: { tone: string; text: string; children: ReactNode }) {
+  return (
+    <dl className="facts">
+      <dt>Status</dt>
+      <dd>
+        <span className={`dot inline-dot ${tone}`} /> {text}
+      </dd>
+      {children}
+    </dl>
+  );
+}
+
+function Progress({ job, children }: { job: DownloadView; children?: ReactNode }) {
+  const progress = job.total ? job.done / job.total : 0;
+  return (
+    <div className="download">
+      <div className="download-head">
+        <span>
+          Downloading <b>{job.label}</b>
+        </span>
+        {children}
+      </div>
+      <progress max={1} value={progress} />
+      <small>
+        {job.total ? `${gb(job.done)} of ${gb(job.total)} (${Math.floor(progress * 100)}%)` : "Starting..."}
+      </small>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- Overview
 
 export function Overview() {
   const { view } = useForm();
   const u = view.update;
-  const d = view.download;
   const updateText = {
     idle: "No update found at the last check",
     checking: "Checking...",
     available: u.state === "available" ? `Version ${u.version} is available` : "",
     installing: u.state === "installing" ? `Installing ${u.version}...` : "",
   }[u.state];
-  const progress = d && d.total ? d.done / d.total : 0;
   return (
     <>
       {view.gameProcess && (
@@ -58,24 +89,22 @@ export function Overview() {
         </div>
       )}
       <dl className="facts">
+        <dt>LLM</dt>
+        <dd>
+          <span className={`dot inline-dot ${view.tone}`} /> {view.statusText} · <code>{view.chatUrl}</code>
+        </dd>
+        <dt>Decision model</dt>
+        <dd>
+          <span className={`dot inline-dot ${view.laya.tone}`} /> {view.laya.statusText}
+          {view.settings.RunLaya && (
+            <>
+              {" "}
+              · <code>{view.laya.url}</code>
+            </>
+          )}
+        </dd>
         <dt>GPU</dt>
         <dd>{view.gpuName ?? "Not detected (runs on the CPU)"}</dd>
-        <dt>llama.cpp build</dt>
-        <dd>{view.backend ?? "-"}</dd>
-        <dt>Context in use</dt>
-        <dd>{view.nCtx ? `${Math.round(view.nCtx / 1024)}K tokens` : "-"}</dd>
-        <dt>Chat &amp; OpenAI API</dt>
-        <dd>
-          <code>{view.chatUrl}</code>
-        </dd>
-        {view.settings.RunLaya && (
-          <>
-            <dt>Laya</dt>
-            <dd>
-              {view.laya.statusText} · <code>{view.laya.url}</code>
-            </dd>
-          </>
-        )}
         <dt>Version</dt>
         <dd>{view.version}</dd>
       </dl>
@@ -84,26 +113,18 @@ export function Overview() {
           {u.state === "available" ? `Get ${u.version}` : "Check for updates"}
         </Btn>
       </Row>
-      {d && (
-        <div className="download">
-          <div className="download-head">
-            <span>
-              Downloading <b>{d.label}</b>
-            </span>
-            <Btn cmd="cancel_download">Cancel</Btn>
-          </div>
-          <progress max={1} value={progress} />
-          <small>
-            {gb(d.done)} of {gb(d.total)} ({Math.floor(progress * 100)}%). The app switches to it when it's done.
-          </small>
-        </div>
+      {view.download && (
+        <Progress job={view.download}>
+          <Btn cmd="cancel_download">Cancel</Btn>
+        </Progress>
       )}
-      <p className="hint">Ctrl+Alt+L turns the LLM on or off from anywhere.</p>
+      {view.laya.job && <Progress job={view.laya.job} />}
+      <p className="hint">Ctrl+Alt+L turns the LLM and the decision model on or off from anywhere.</p>
     </>
   );
 }
 
-// ---------------------------------------------------------------- Model
+// ---------------------------------------------------------------- LLM
 
 function CatalogRow({ c }: { c: CatalogEntry }) {
   const { view, send } = useForm();
@@ -138,11 +159,44 @@ function CatalogRow({ c }: { c: CatalogEntry }) {
   );
 }
 
-export function ModelPanel() {
+function generateKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+export function LlmPanel() {
   const { view } = useForm();
   return (
     <>
-      <Fieldset legend="Installed models">
+      <p className="intro">
+        The LLM writes text: chat, summaries, code. llama.cpp serves it with a chat page and an OpenAI-compatible API,
+        and it pauses while you play.
+      </p>
+      <Status tone={view.tone} text={view.statusText}>
+        <dt>API</dt>
+        <dd>
+          <code>{view.chatUrl}</code> (OpenAI-compatible: <code>/v1/chat/completions</code>)
+        </dd>
+        <dt>llama.cpp</dt>
+        <dd>{view.backend ?? "-"}</dd>
+        <dt>Context in use</dt>
+        <dd>{view.nCtx ? `${Math.round(view.nCtx / 1024)}K tokens` : "-"}</dd>
+      </Status>
+      {view.download && (
+        <Progress job={view.download}>
+          <Btn cmd="cancel_download">Cancel</Btn>
+        </Progress>
+      )}
+      <div className="row-buttons engine-actions">
+        <Btn cmd="restart" disabled={!view.canRestart}>
+          Restart LLM
+        </Btn>
+        <Btn cmd="view_log">View log</Btn>
+      </div>
+      <Fieldset legend="Model">
         <ModelPicker k="Model" />
         <div className="row-buttons">
           <Btn cmd="open_models">Open models folder</Btn>
@@ -176,52 +230,38 @@ export function ModelPanel() {
           hint="Auto lets llama.cpp use the largest that fits your GPU."
         />
       </Fieldset>
+      <Fieldset legend="Server">
+        <NumberField k="Port" label="Port" hint="1024 - 65535" min={1024} max={65535} integer />
+        <Choice
+          k="ListenHost"
+          label="Access"
+          hint="Who can reach the chat page and the APIs. Also applies to the decision model."
+          options={[
+            ["127.0.0.1", "This PC only"],
+            ["0.0.0.0", "Devices on my network"],
+          ]}
+        />
+        <TextField
+          k="ApiKey"
+          label="API key"
+          hint={
+            <>
+              Optional, and also used by the decision model. Clients send it as a Bearer token. Letters, digits and{" "}
+              <code>. _ - ~</code>.
+            </>
+          }
+          pattern={/^[A-Za-z0-9._~-]*$/}
+          maxLength={128}
+          placeholder="(none)"
+          generate={generateKey}
+        />
+        <p className="hint">Changes to the model and the server restart the LLM when you save.</p>
+      </Fieldset>
     </>
   );
 }
 
-// ---------------------------------------------------------------- Server & API
-
-function generateKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(24));
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-export function ServerPanel() {
-  return (
-    <Fieldset>
-      <Choice
-        k="ListenHost"
-        label="Access"
-        hint="Who can reach the chat page and the API."
-        options={[
-          ["127.0.0.1", "This PC only"],
-          ["0.0.0.0", "Devices on my network"],
-        ]}
-      />
-      <NumberField k="Port" label="Port" hint="1024 - 65535" min={1024} max={65535} integer />
-      <TextField
-        k="ApiKey"
-        label="API key"
-        hint={
-          <>
-            Optional. Clients must send it as a Bearer token. Letters, digits and <code>. _ - ~</code>.
-          </>
-        }
-        pattern={/^[A-Za-z0-9._~-]*$/}
-        maxLength={128}
-        placeholder="(none)"
-        generate={generateKey}
-      />
-      <p className="hint">Changes on this page and to the model restart the server when you save.</p>
-    </Fieldset>
-  );
-}
-
-// ---------------------------------------------------------------- Laya
+// ---------------------------------------------------------------- Decision model
 
 // Mirror laya::MODELS, laya::KEEP_ALIVE_PRESETS and laya::Device::ALL.
 const LAYA_MODELS = [
@@ -244,18 +284,17 @@ function withSaved(presets: readonly (readonly [string, string])[], saved: strin
   return presets.some(([v]) => v === saved) ? presets : [...presets, [saved, saved] as const];
 }
 
-export function LayaPanel() {
+export function DecisionPanel() {
   const form = useForm();
   const l = form.view.laya;
   const on = form.value("RunLaya");
-  const job = l.job;
-  const progress = job && job.total ? job.done / job.total : 0;
+  const running = form.view.settings.RunLaya;
   return (
     <>
       <p className="intro">
-        Laya is a <i>decision model</i>: it answers typed questions about a text (pick one of these options, score it,
-        yes or no) in milliseconds, instead of writing text. Ollaya (ollaya.dev) serves it next to the LLM, with the
-        same on/off switch and pause while gaming.
+        The decision model answers typed questions about a text (pick one of these options, score it, yes or no) in
+        milliseconds, instead of writing text. Ollaya (ollaya.dev) serves Laya next to the LLM, with the same on/off
+        switch and pause while gaming.
       </p>
       <Fieldset>
         <Toggle
@@ -264,42 +303,23 @@ export function LayaPanel() {
           hint="Installs Ollaya (about 25 MB, plus 1.1 GB on NVIDIA GPUs) and downloads the model (about 1 GB)."
         />
       </Fieldset>
-      {form.view.settings.RunLaya && (
-        <>
-          <dl className="facts">
-            <dt>Status</dt>
-            <dd>
-              <span className={`dot inline-dot ${l.tone}`} /> {l.statusText}
-            </dd>
-            <dt>API</dt>
-            <dd>
-              <code>{l.url}</code> (Ollaya and TypeSafe-compatible: <code>/api/decide</code>, <code>/v1/systemone</code>
-              )
-            </dd>
-            <dt>Ollaya</dt>
-            <dd>{l.version ?? "not installed yet"}</dd>
-          </dl>
-          {job && (
-            <div className="download">
-              <div className="download-head">
-                <span>
-                  Downloading <b>{job.label}</b>
-                </span>
-              </div>
-              <progress max={1} value={progress} />
-              <small>
-                {job.total ? `${gb(job.done)} of ${gb(job.total)} (${Math.floor(progress * 100)}%)` : "Starting..."}
-              </small>
-            </div>
-          )}
-          <div className="row-buttons">
-            <Btn cmd="restart_laya">Restart Laya</Btn>
-            <Btn cmd="update_laya" disabled={l.checking || !!job}>
-              {l.update ? `Install Ollaya ${l.update}` : l.checking ? "Checking..." : "Check for Ollaya updates"}
-            </Btn>
-            <Btn cmd="view_laya_log">View Laya log</Btn>
-          </div>
-        </>
+      <Status tone={l.tone} text={l.statusText}>
+        <dt>API</dt>
+        <dd>
+          <code>{l.url}</code> (Ollaya and TypeSafe-compatible: <code>/api/decide</code>, <code>/v1/systemone</code>)
+        </dd>
+        <dt>Ollaya</dt>
+        <dd>{running ? (l.version ?? "not installed yet") : "-"}</dd>
+      </Status>
+      {l.job && <Progress job={l.job} />}
+      {running && (
+        <div className="row-buttons engine-actions">
+          <Btn cmd="restart_laya">Restart Laya</Btn>
+          <Btn cmd="update_laya" disabled={l.checking || !!l.job}>
+            {l.update ? `Install Ollaya ${l.update}` : l.checking ? "Checking..." : "Check for Ollaya updates"}
+          </Btn>
+          <Btn cmd="view_laya_log">View Laya log</Btn>
+        </div>
       )}
       <Fieldset legend="Model" disabled={!on}>
         <Choice
@@ -319,14 +339,14 @@ export function LayaPanel() {
         <Choice
           k="LayaDevice"
           label="Run on"
-          hint="On the CPU, Laya keeps running while you play; on the GPU it pauses with the LLM."
+          hint="Ollaya runs on NVIDIA GPUs (CUDA 13). With an AMD or Intel GPU it runs on the CPU."
           options={[
-            ["auto", "Auto (NVIDIA GPU if there is one)"],
+            ["auto", "Auto (NVIDIA GPU if there is one, else CPU)"],
             ["cpu", "CPU only"],
             ["cuda", "NVIDIA GPU only"],
           ]}
         />
-        <p className="hint">Access and the API key are the LLM's (Server &amp; API). Changes restart Laya.</p>
+        <p className="hint">Access and the API key are shared with the LLM (LLM → Server). Changes restart Laya.</p>
       </Fieldset>
     </>
   );

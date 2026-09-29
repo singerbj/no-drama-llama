@@ -1,6 +1,6 @@
 ---
 title: First steps
-description: The tray icon, the chat UI, the API and the on/off hotkey.
+description: The tray icon, the settings window, the chat UI, the APIs and the on/off hotkey.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -25,13 +25,32 @@ Windows hides new tray icons in the overflow menu. Drag the llama onto the taskb
 visible.
 </Aside>
 
+## The settings window
+
+Choose **Open settings window...** in the tray menu. It has every setting, with the same
+controls as the menu, in five tabs:
+
+- **Overview:** your GPU, the LLM and the decision model (status and address), the version,
+  updates and download progress.
+- **LLM:** status, API address, llama.cpp build and context in use (*Restart LLM*, *View log*);
+  your models and the model catalog; reasoning and context length; and the server's access,
+  port and API key.
+- **Decision model:** *Run Laya alongside the LLM*; status, API address and Ollaya version
+  (*Restart Laya*, *Check for Ollaya updates*, *View Laya log*); Laya's model, how long it stays
+  loaded, its port and what it runs on.
+- **Game detection:** every [detection setting](/docs/guides/game-detection/).
+- **App:** *Start with Windows*, *Update automatically*, privacy, popups, files and *Exit*.
+
+Changes apply when you click **Save** (or press Ctrl+S). **Access** and the **API key**, on the
+**LLM** tab, apply to both models.
+
 ## Chat
 
 Double-click the tray icon, or open [http://127.0.0.1:8080](http://127.0.0.1:8080). That's llama.cpp's built-in chat UI.
 
-## Use the API
+## Use the LLM's API
 
-The API is at `http://127.0.0.1:8080/v1` and speaks the OpenAI protocol:
+The LLM's API is at `http://127.0.0.1:8080/v1` and speaks the OpenAI protocol:
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/json" \
@@ -40,12 +59,21 @@ curl http://127.0.0.1:8080/v1/chat/completions -H "Content-Type: application/jso
 
 See [Chat and API](/docs/guides/api/) for SDK examples and tool setup.
 
+## Turn on the decision model
+
+The decision model, Laya, answers typed questions about a text (pick an option, score it, yes
+or no) in milliseconds. It's off until you turn it on: open the **Decision model** tab, turn on
+*Run Laya alongside the LLM* and click **Save**. The first time, it downloads Ollaya and the model
+(about 1 GB). Then ask it questions at `http://127.0.0.1:11435/api/decide`. See
+[Decision model (Laya)](/docs/guides/laya/).
+
 ## Turn it on and off
 
 - Press **Ctrl+Alt+L** from anywhere, or
 - choose **Turn off** / **Turn on** in the tray menu.
 
-Turning it off frees the GPU until you turn it back on, even across restarts.
+Turning it off stops the LLM and the decision model and frees the GPU until you turn it back on,
+even across restarts.
 
 ## Play a game
 
@@ -54,7 +82,7 @@ Just play. When a game starts, you'll see a popup at the top of the screen:
 > **LLM paused** · *Game (Steam) detected - GPU freed*
 
 It doesn't take focus, and clicks pass through it. Once you've quit the game for 60 seconds,
-the model loads again. If something that isn't a game pauses it, see
+the models load again. If something that isn't a game pauses it, see
 [Game detection](/docs/guides/game-detection/#when-it-gets-it-wrong).
 
 ## If you closed the tray app

@@ -1,12 +1,16 @@
 ---
 title: Models and GPUs
-description: How No Drama Llama picks a llama.cpp build and a model for your hardware, and how to change them.
+description: How No Drama Llama picks a llama.cpp build and an LLM for your hardware, and how to change them.
 ---
+
+This page is about the LLM. The decision model has its own models: see
+[Decision model (Laya)](/docs/guides/laya/#settings).
 
 ## The model catalog
 
-Choose **Settings → Model → Download a model** in the tray, or run `no-drama-llama.exe models`,
-to see the catalog:
+Open the **LLM** tab of the settings window and look under **Download a model**, choose
+**Settings → Model → Download a model** in the tray, or run `no-drama-llama.exe models`, to see
+the catalog:
 
 | Model | Sizes | Best for |
 | --- | --- | --- |
@@ -45,15 +49,19 @@ The recommendation uses your main GPU's memory (integrated GPUs are skipped) and
 
 ## Switching models
 
-- **From the tray:** *Settings → Model* lists every model in `C:\LLM\models`. Pick one and the
-  server restarts with it.
+- **From the settings window:** the **LLM** tab's **Model** section lists every model in
+  `C:\LLM\models`. Pick one and **Save**, and the LLM restarts with it.
+- **From the tray:** *Settings → Model* lists the same models. Pick one and the LLM restarts
+  with it.
 - **Downloading:** *Download a model* runs in the background. Progress shows in the menu (click
-  it to cancel), and it switches over when the download finishes and verifies.
+  it to cancel) and in the settings window, and it switches over when the download finishes and
+  verifies.
 - **At install:** `no-drama-llama.exe install --model qwen3.8-27b:UD-Q5_K_XL`.
 
 ## Bring your own model
 
-Put any `.gguf` file in `C:\LLM\models` and it appears under *Settings → Model*. For split
+Put any `.gguf` file in `C:\LLM\models` (**Open models folder** on the **LLM** tab) and it
+appears in the model list. For split
 GGUFs, the first part is listed. You can install without downloading a model at all with
 `install --model none`.
 
@@ -78,5 +86,5 @@ your GPU, the next install notices and reinstalls the right build. To force one:
 
 llama.cpp's `--fit` sizes everything the app leaves unset to your free GPU memory: the GPU
 layers, the context (when *Context length* is *Auto*), and which MoE experts run on the CPU. The
-tray's status line shows the context it chose. Older llama.cpp builds without `--fit` get all
+tray's status line and *Context in use* on the **LLM** tab show the context it chose. Older llama.cpp builds without `--fit` get all
 layers on the GPU and a 32K context.

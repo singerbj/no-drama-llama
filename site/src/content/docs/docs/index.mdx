@@ -5,30 +5,49 @@ description: What No Drama Llama does, how it works, and where to start.
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-No Drama Llama turns a Windows gaming PC into an always-on local LLM server that **gets out of
-the way when you play**. It runs [llama.cpp](https://github.com/ggml-org/llama.cpp) with a
-[Qwen 3.8](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) model sized for your GPU. When a game
-starts, it stops the model so the game gets all of your VRAM, and it brings the model back once
-you quit.
+No Drama Llama turns a Windows gaming PC into an always-on local AI server that **gets out of
+the way when you play**. It runs two kinds of models side by side. When a game starts, it stops
+them so the game gets all of your VRAM, and it brings them back once you quit.
 
 It ships as one self-installing Windows app, `no-drama-llama.exe`, that lives in the system tray.
+
+## Two models
+
+<CardGrid>
+  <Card title="LLM" icon="document">
+    Writes text. [llama.cpp](https://github.com/ggml-org/llama.cpp) runs a
+    [Qwen 3.8](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) model sized for your GPU (or any
+    `.gguf` you like), with an OpenAI-compatible API and a chat page at `http://127.0.0.1:8080`.
+    See [Chat and API](/docs/guides/api/) and [Models and GPUs](/docs/guides/models/).
+  </Card>
+  <Card title="Decision model" icon="list-format">
+    Answers typed questions about a text: pick an option, score it, yes or no. [Laya](https://ollaya.dev/library/laya),
+    served by [Ollaya](https://ollaya.dev), does that in milliseconds at
+    `http://127.0.0.1:11435` (`/api/decide`, `/v1/systemone`). Off by default. See
+    [Decision model (Laya)](/docs/guides/laya/).
+  </Card>
+</CardGrid>
+
+Both share the same on/off switch, game pausing, access setting and API key. A typical pattern
+is to let the decision model route or triage, and call the LLM only when you need text written.
 
 ## How it works
 
 ```
   Running ──── a game starts ────►  Paused  ──── game closed for 60 s ────►  Loading ──► Running
-  (model on the GPU)               (llama-server stopped,                    (model reloads)
-                                    VRAM free for the game)
+  (models on the GPU)              (llama-server and Ollaya                  (models reload)
+                                    stopped, VRAM free)
 ```
 
 1. Every 5 seconds, the app checks for games. It looks at the folders your launchers install
    games into, and at which other apps are using the GPU.
-2. When it finds a game, it stops `llama-server` and shows a small popup that doesn't take focus.
+2. When it finds a game, it stops `llama-server` (and Ollaya, when the decision model is on) and
+   shows a small popup that doesn't take focus.
 3. When the game has been closed for `ResumeAfterSec` (60 seconds by default), it starts the
-   model again.
+   models again.
 
-The rest of the time, the model serves an OpenAI-compatible API and a chat web UI at
-`http://127.0.0.1:8080`.
+The rest of the time, the LLM serves `http://127.0.0.1:8080` and the decision model serves
+`http://127.0.0.1:11435`.
 
 ## Features
 
@@ -45,8 +64,8 @@ The rest of the time, the model serves an OpenAI-compatible API and a chat web U
     Use any OpenAI client, editor plugin or agent. See [Chat and API](/docs/guides/api/).
   </Card>
   <Card title="Tray app" icon="setting">
-    Status at a glance, every setting in the right-click menu, and Ctrl+Alt+L to turn it on or
-    off. See [Tray menu](/docs/reference/tray-menu/).
+    Status at a glance, every setting in the right-click menu and the settings window, and
+    Ctrl+Alt+L to turn both models on or off. See [Tray menu](/docs/reference/tray-menu/).
   </Card>
   <Card title="Always on, low power" icon="moon">
     No sleep, screen off after 10 minutes, power saving and Wake-on-LAN. See
@@ -61,4 +80,5 @@ The rest of the time, the model serves an OpenAI-compatible API and a chat web U
 
 - [Install it](/docs/install/): download one exe and choose **Yes**.
 - [First steps](/docs/first-steps/): the tray icon, the chat UI and the hotkey.
-- [Connect your tools](/docs/guides/api/) to the API.
+- [Connect your tools](/docs/guides/api/) to the LLM's API.
+- [Turn on the decision model](/docs/guides/laya/) and ask it questions.

@@ -22,22 +22,42 @@ const reply = await llama.chat.completions.create({
 });
 console.log(reply.choices[0].message.content);`;
 
-const title = 'No Drama Llama: a local LLM server that pauses while you play';
+const decideSnippet = `curl http://127.0.0.1:11435/api/decide -d '{
+  "model": "laya",
+  "state": "I was charged twice this month. Please refund it.",
+  "questions": {
+    "department": {
+      "type": "choice",
+      "instructions": "Which team should handle this?",
+      "criteria": {
+        "billing": "Payments, invoices and refunds",
+        "technical": "Bugs, errors and outages"
+      }
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "How urgent is this?",
+      "criteria": ["Can wait", "This week", "Today"]
+    }
+  }
+}'`;
+
+const title = 'No Drama Llama: a local LLM and decision model that pause while you play';
 const description =
-  'Turn your Windows gaming PC into an always-on local LLM server. It frees your VRAM the moment a game starts and brings the model back when you quit.';
+  'Turn your Windows gaming PC into an always-on local AI server: an LLM that writes text and a decision model that answers typed questions. It frees your VRAM the moment a game starts and brings the models back when you quit.';
 
 const steps = [
   {
     title: 'Install one exe',
-    body: 'It detects your GPU, installs the fastest llama.cpp build for it, and downloads the best model that fits. Every download is verified.',
+    body: 'It detects your GPU, installs the fastest llama.cpp build for it, and downloads the best LLM that fits. Turn on Laya to add the decision model. Every download is verified.',
   },
   {
     title: 'It serves, all day',
-    body: 'An OpenAI-compatible API and a chat UI at 127.0.0.1:8080. It starts with Windows and runs in the tray.',
+    body: 'The LLM’s OpenAI-compatible API and chat UI at 127.0.0.1:8080, and the decision model’s API at 127.0.0.1:11435. It starts with Windows and runs in the tray.',
   },
   {
     title: 'You play, it steps aside',
-    body: 'Launch a game and the model stops, so the game gets all of your VRAM. Quit, and it comes back a minute later.',
+    body: 'Launch a game and the models stop, so the game gets all of your VRAM. Quit, and they come back a minute later.',
   },
 ];
 
@@ -70,7 +90,7 @@ const features = [
     icon: 'key',
     tone: 'tone-game',
     title: 'Ctrl+Alt+L',
-    body: 'Turn the model on or off from anywhere, even full-screen.',
+    body: 'Turn the LLM and the decision model on or off from anywhere, even full-screen.',
   },
   {
     icon: 'box',
@@ -146,7 +166,11 @@ const faqs = [
   },
   {
     q: 'Will it slow down my games?',
-    a: 'No. When a game starts, the model is stopped completely, so the game gets all of your VRAM. It only comes back after the game has been closed for a while (60 seconds by default).',
+    a: 'No. When a game starts, the models are stopped completely, so the game gets all of your VRAM. They only come back after the game has been closed for a while (60 seconds by default).',
+  },
+  {
+    q: 'What’s a decision model?',
+    a: 'A model that answers typed questions about a text instead of writing one: pick one of these options, score it, yes or no. Laya does that in a single pass, in milliseconds, with a confidence for each answer. It’s off by default: turn it on in the setup wizard or on the Decision model tab of the settings window.',
   },
   {
     q: 'What if it pauses for something that isn’t a game?',
@@ -154,7 +178,7 @@ const faqs = [
   },
   {
     q: 'Can I use it from my laptop or phone?',
-    a: 'Yes. Set Access to “Devices on my network” and set an API key. Then any device on your network can use the chat UI or the API.',
+    a: 'Yes. Set Access to “Devices on my network” and set an API key. Then any device on your network can use the chat UI and both APIs.',
   },
   {
     q: 'Does it work without a GPU?',
@@ -211,6 +235,7 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
         <nav aria-label="Main">
           <a href={docs()}>Docs</a>
           <a href={docs('guides/api/')} class="hide-sm">API</a>
+          <a href={docs('guides/laya/')} class="hide-sm">Decision model</a>
           <a href={repo} class="hide-sm">GitHub</a>
           <button class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
             <span aria-hidden="true" set:html={icon('theme')} />
@@ -227,8 +252,10 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
             <p class="eyebrow">Free &amp; open source · Windows 10 and 11</p>
             <h1>Your gaming PC is an AI server. <span class="accent">It just knows when to step aside.</span></h1>
             <p class="lede">
-              No Drama Llama runs a local LLM on your GPU around the clock. The moment a game starts,
-              it stops the model and hands the game all of your VRAM. Quit, and it’s back.
+              No Drama Llama runs two kinds of local models on your PC around the clock: an LLM that
+              writes text, and a decision model that answers typed questions in milliseconds. The
+              moment a game starts, it stops them and hands the game all of your VRAM. Quit, and
+              they’re back.
             </p>
             <div class="ctas">
               <a class="btn" href={download}>
@@ -331,7 +358,26 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
         </div>
       </section>
 
-      <section class="section alt" id="models">
+      <section class="section alt" id="decide">
+        <div class="wrap split">
+          <div>
+            <h2>Decides in milliseconds</h2>
+            <p class="section-lede">
+              Not every job needs text written. Laya, the decision model, reads a message, ticket or
+              any JSON and answers typed questions about it: pick an option, a score, yes or no. It
+              answers in a single pass, with a confidence for each answer. Ollaya serves it next to
+              the LLM, with the same on/off switch, game pausing, access and API key.
+            </p>
+            <a class="link" href={docs('guides/laya/')}>Turn on the decision model →</a>
+          </div>
+          <div class="code" role="region" aria-label="Example: asking Laya two questions with curl">
+            <div class="code-bar"><span>decide.sh</span></div>
+            <Code code={decideSnippet} lang="bash" theme="vitesse-dark" />
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="models">
         <div class="wrap split">
           <div>
             <h2>The best model your PC can run</h2>
@@ -359,7 +405,7 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
         </div>
       </section>
 
-      <section class="section" id="trust">
+      <section class="section alt" id="trust">
         <div class="wrap">
           <h2>Careful with your machine</h2>
           <ul class="trust">
@@ -371,7 +417,7 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
         </div>
       </section>
 
-      <section class="section alt" id="faq">
+      <section class="section" id="faq">
         <div class="wrap narrow">
           <h2>Questions</h2>
           <div class="faq">
@@ -385,7 +431,7 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
         </div>
       </section>
 
-      <section class="section cta-final">
+      <section class="section alt cta-final">
         <div class="wrap narrow center">
           <img class="cta-logo" src={`${base}favicon.svg`} width="72" height="72" alt="" />
           <h2>Game on. <span class="accent">The llama will wait.</span></h2>
@@ -403,7 +449,7 @@ const icon = (name: string) => iconFiles[`../../../design/assets/icons/${name}.s
 
     <footer class="footer">
       <div class="wrap footer-inner">
-        <span>No Drama Llama · runs <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a></span>
+        <span>No Drama Llama · runs <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a> and <a href="https://ollaya.dev">Ollaya</a></span>
         <nav aria-label="Footer">
           <a href={docs()}>Docs</a>
           <a href={docs('reference/changelog/')}>Changelog</a>

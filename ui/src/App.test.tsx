@@ -23,6 +23,7 @@ vi.mock("./api", async () => {
 });
 
 const savebar = () => document.querySelector(".savebar");
+const facts = () => document.querySelector("section:not([hidden]) .facts")?.textContent;
 const saves = () => sent.filter((r) => r.cmd === "save");
 
 beforeEach(async () => {
@@ -50,9 +51,9 @@ describe("status header", () => {
 
 describe("editing settings", () => {
   it("saves only the changed values", async () => {
-    await showTab("Server & API");
+    await showTab("LLM");
     await type(control("Port"), "9000");
-    expect(savebar()?.textContent).toContain("1 unsaved change · saving restarts the model");
+    expect(savebar()?.textContent).toContain("1 unsaved change · saving restarts the LLM");
     await click(button("Save"));
     expect(saves()).toEqual([{ cmd: "save", settings: { Port: 9000 } }]);
     await waitFor(() => expect(document.querySelector(".toast")?.textContent).toBe("Saved"));
@@ -61,7 +62,7 @@ describe("editing settings", () => {
   });
 
   it("won't save an invalid value, and Revert restores the tray's", async () => {
-    await showTab("Server & API");
+    await showTab("LLM");
     const port = control("Port");
     await type(port, "80");
     expect(port.className).toBe("invalid");
@@ -74,16 +75,16 @@ describe("editing settings", () => {
   });
 
   it("keeps an invalid value typed on another tab", async () => {
-    await showTab("Server & API");
+    await showTab("LLM");
     await type(control("API key"), "has spaces");
     await showTab("App");
     expect(savebar()?.textContent).toContain("Fix the highlighted value");
-    await showTab("Server & API");
+    await showTab("LLM");
     expect(control("API key").value).toBe("has spaces");
   });
 
   it("generates a valid API key", async () => {
-    await showTab("Server & API");
+    await showTab("LLM");
     await click(button("Generate"));
     const key = control("API key").value;
     expect(key).toMatch(/^[A-Za-z0-9_-]{32}$/);
@@ -113,7 +114,7 @@ describe("editing settings", () => {
   });
 
   it("takes a custom context length", async () => {
-    await showTab("Model");
+    await showTab("LLM");
     await type(control<HTMLSelectElement>("Context length"), "custom");
     expect(button("Save").disabled).toBe(true); // nothing typed yet
     const tokens = document.querySelector<HTMLInputElement>('input[aria-label="Context tokens"]')!;
@@ -125,7 +126,7 @@ describe("editing settings", () => {
   });
 
   it("switches models", async () => {
-    await showTab("Model");
+    await showTab("LLM");
     await click(control("my-own-model.Q5_K_M.gguf"));
     await click(button("Save"));
     expect(saves()).toEqual([{ cmd: "save", settings: { Model: "my-own-model.Q5_K_M.gguf" } }]);
@@ -145,7 +146,7 @@ describe("editing settings", () => {
 
 describe("models", () => {
   it("asks before downloading, then shows progress", async () => {
-    await showTab("Model");
+    await showTab("LLM");
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const row = [...document.querySelectorAll(".entry")].find((e) => e.textContent?.includes("recommended"))!;
     await click(button("Download", row));
@@ -159,7 +160,7 @@ describe("models", () => {
   });
 
   it("doesn't offer models that are installed or too big", async () => {
-    await showTab("Model");
+    await showTab("LLM");
     const rows = [...document.querySelectorAll(".entry")];
     const installed = rows.find((e) => e.textContent?.includes("UD-Q4_K_XL (17.6"))!;
     const tooBig = rows.find((e) => e.textContent?.includes("too big"))!;
@@ -170,7 +171,7 @@ describe("models", () => {
 
 describe("Laya", () => {
   it("turns Laya on, then shows its status and download", async () => {
-    await showTab("Laya");
+    await showTab("Decision model");
     const model = control<HTMLSelectElement>("Model");
     const fieldset = model.closest("fieldset")!;
     expect(fieldset.disabled).toBe(true); // off by default
@@ -181,29 +182,29 @@ describe("Laya", () => {
     expect(savebar()?.textContent).not.toContain("restarts"); // Laya isn't running yet
     await click(button("Save"));
     expect(saves()).toEqual([{ cmd: "save", settings: { RunLaya: true, LayaModel: "laya:en" } }]);
-    await waitFor(() => expect(document.querySelector(".facts")?.textContent).toContain("Downloading laya:en..."));
+    await waitFor(() => expect(facts()).toContain("Downloading laya:en..."));
     expect(document.querySelector("section:not([hidden]) .download")?.textContent).toContain("(40%)");
     await click(button("Restart Laya"));
     expect(sent).toContainEqual({ cmd: "restart_laya" });
     await showTab("Overview");
-    expect(document.querySelector(".facts")?.textContent).toContain("http://127.0.0.1:11435");
+    expect(facts()).toContain("Decision model Downloading laya:en... · http://127.0.0.1:11435");
   });
 
   it("says a Laya setting restarts Laya once it runs", async () => {
-    await showTab("Laya");
+    await showTab("Decision model");
     await click(control("Run Laya alongside the LLM"));
     await click(button("Save"));
     await waitFor(() => expect(button("Restart Laya")).toBeTruthy()); // the tray confirmed it
     await type(control<HTMLSelectElement>("Keep the model loaded"), "5m");
     expect(savebar()?.textContent).toContain("1 unsaved change · saving restarts Laya");
-    await showTab("Server & API");
+    await showTab("LLM");
     await type(control("Port"), "9000");
     await type(control<HTMLSelectElement>("Access"), "0.0.0.0");
-    expect(savebar()?.textContent).toContain("saving restarts the model and Laya");
+    expect(savebar()?.textContent).toContain("saving restarts the LLM and Laya");
   });
 
   it("rejects a port out of range and keeps unknown models from the settings file", async () => {
-    await showTab("Laya");
+    await showTab("Decision model");
     await click(control("Run Laya alongside the LLM"));
     const port = control("Port");
     await type(port, "80");
@@ -212,6 +213,16 @@ describe("Laya", () => {
     await click(button("Revert"));
     const options = [...control<HTMLSelectElement>("Model").options].map((o) => o.value);
     expect(options).toEqual(["laya", "laya:en", "laya:multilingual", "laya:typed-decisions"]);
+  });
+});
+
+describe("tabs", () => {
+  it("opens the tab that replaced a remembered old one", async () => {
+    await cleanup();
+    localStorage.setItem("tab", "laya");
+    await render(<App />);
+    await waitFor(() => expect(document.querySelector("nav .active")?.textContent).toBe("Decision model"));
+    expect(document.querySelector("section:not([hidden]) h2")?.textContent).toBe("Decision model");
   });
 });
 

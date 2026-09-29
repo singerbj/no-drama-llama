@@ -3,9 +3,9 @@ title: Game detection
 description: How No Drama Llama notices a game, and how to tune it when it gets it wrong.
 ---
 
-Every 5 seconds, the app decides whether a game is running. If one is, it stops the model so the
-game gets all of your VRAM. When no game has been seen for `ResumeAfterSec` (60 seconds by
-default), it starts the model again.
+Every 5 seconds, the app decides whether a game is running. If one is, it stops the LLM and the
+decision model so the game gets all of your VRAM. When no game has been seen for
+`ResumeAfterSec` (60 seconds by default), it starts them again. Both stop, wherever they run: the game gets the CPU as well as the GPU.
 
 ## Two detectors
 
@@ -23,7 +23,8 @@ knows about, and the game Steam reports as running.
 default). An exclusive full-screen app in the foreground also counts. This catches games the
 launcher check misses.
 
-By default both are on. Choose **Settings → Game detection → Detect games by** to use only one.
+By default both are on. Set **Detect games by** on the **Game detection** tab, or under
+**Settings → Game detection** in the tray, to use only one.
 
 ## Emulators
 
@@ -50,5 +51,5 @@ if you'd rather they didn't.
 
 ## Turning it off
 
-Untick **Pause while gaming** (`PauseWhileGaming`) to keep the model running no matter what. You
+Untick **Pause while gaming** (`PauseWhileGaming`) to keep the models running no matter what. You
 can still turn it off by hand with **Ctrl+Alt+L**.

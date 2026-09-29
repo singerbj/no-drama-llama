@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 import { connect, type Api } from "./api";
 import { FormProvider, RESTARTS_LAYA, RESTARTS_SERVER, useSettingsForm } from "./form";
-import { AppPanel, GamesPanel, LayaPanel, ModelPanel, Overview, ServerPanel } from "./panels";
+import { AppPanel, DecisionPanel, GamesPanel, LlmPanel, Overview } from "./panels";
 import type { Request, View } from "./types";
 
 const TABS: [id: string, title: string, Panel: ComponentType][] = [
   ["overview", "Overview", Overview],
-  ["model", "Model", ModelPanel],
-  ["server", "Server & API", ServerPanel],
-  ["laya", "Laya", LayaPanel],
+  ["llm", "LLM", LlmPanel],
+  ["decision", "Decision model", DecisionPanel],
   ["games", "Game detection", GamesPanel],
   ["app", "App", AppPanel],
 ];
 
+/** Tabs that were merged or renamed, so a remembered one still opens. */
+const RENAMED: Record<string, string> = { model: "llm", server: "llm", laya: "decision" };
+
 function storedTab(): string {
   try {
-    return localStorage.getItem("tab") ?? "overview";
+    const t = localStorage.getItem("tab") ?? "overview";
+    return RENAMED[t] ?? t;
   } catch {
     return "overview"; // storage unavailable: the tab just isn't remembered
   }
@@ -107,7 +110,7 @@ export function App() {
 
   const dirty = changed.length > 0 || invalid.size > 0;
   const restarting = [
-    changed.some((k) => RESTARTS_SERVER.includes(k)) && "the model",
+    changed.some((k) => RESTARTS_SERVER.includes(k)) && "the LLM",
     view.settings.RunLaya && changed.some((k) => RESTARTS_LAYA.includes(k)) && "Laya",
   ].filter(Boolean);
 
@@ -117,7 +120,10 @@ export function App() {
         <span className={`dot ${view.tone}`} />
         <div className="status-text">
           <strong>{view.statusText}</strong>
-          <small>{view.running ? `Chat and API at ${view.chatUrl}` : ""}</small>
+          <small>
+            {view.running ? `Chat and API at ${view.chatUrl}` : ""}
+            {view.running && view.laya.ready ? ` · decision model at ${view.laya.url}` : ""}
+          </small>
         </div>
         <div className="actions">
           <button onClick={() => send({ cmd: "toggle" })}>{view.off ? "Turn on" : "Turn off"}</button>

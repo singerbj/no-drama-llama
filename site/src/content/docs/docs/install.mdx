@@ -11,7 +11,8 @@ import { Aside, Steps } from '@astrojs/starlight/components';
 - **Any GPU with a Vulkan or CUDA driver.** More VRAM means a better model, but everything from
   8 GB cards up works (see [Models and GPUs](/docs/guides/models/)). Without a GPU it still runs
   on the CPU, slowly.
-- **Free space on `C:`** for the model: 8 – 30 GB for Qwen 3.8 27B, 75 – 115 GB for Flash-Next.
+- **Free space on `C:`** for the LLM: 8 – 30 GB for Qwen 3.8 27B, 75 – 115 GB for Flash-Next.
+  The decision model needs about 1 GB more (plus 1.1 GB for Ollaya's GPU pack on NVIDIA).
 
 ## Install
 
@@ -27,19 +28,21 @@ import { Aside, Steps } from '@astrojs/starlight/components';
    stops the install and says how to fix it; *Check again* runs the checks again. Yellow items
    are advice, like updating an old NVIDIA driver.
 
-4. **Model.** The models that fit your GPU are listed, with the best one selected. Green fits
+4. **Model.** The LLMs that fit your GPU are listed, with the best one selected. Green fits
    entirely on the GPU, which is fastest. On an upgrade you can keep your current model, and you
    can also install without one.
 
 5. **Options.** The llama.cpp build is picked for your GPU (CUDA on NVIDIA, Vulkan on AMD and
    Intel). Always-on power settings, Wake-on-LAN and *Start with Windows* are on by default
-   (the power settings are off on laptops). Laya is off.
+   (the power settings are off on laptops). The [decision model](/docs/guides/laya/) (Laya) is
+   off; turn it on here, or later on the **Decision model** tab of the settings window.
 
 6. **Review and install.** The summary shows the download size and the disk space needed.
    *Install* shows each step and the download progress, and *Stop* pauses it (downloads resume
    next time).
 
-7. The tray icon appears and the model starts loading. The icon turns green when it's ready.
+7. The tray icon appears and the LLM starts loading (and Laya, if you turned it on). The icon
+   turns green when the LLM is ready.
 
 </Steps>
 
@@ -58,7 +61,8 @@ verifies every update against the project's signing key.
 | --- | --- |
 | `C:\Program Files\No Drama Llama` | The app. It starts with Windows and appears in **Settings → Apps**. |
 | `C:\LLM\llama` | llama.cpp |
-| `C:\LLM\models` | Models (`.gguf`). You can drop your own in here. |
+| `C:\LLM\models` | LLM models (`.gguf`). You can drop your own in here. |
+| `C:\LLM\ollaya` | Ollaya and the decision models, when Laya is on |
 | `C:\LLM\data` | `settings.json`, logs |
 
 ## Installer options
@@ -74,6 +78,7 @@ a terminal in the folder with the exe:
 .\no-drama-llama.exe install --skip-power-settings --skip-wake-on-lan
 .\no-drama-llama.exe install --llama-cpp-tag b6500   # pin a llama.cpp build
 .\no-drama-llama.exe install --update-llama-cpp      # re-download llama.cpp
+.\no-drama-llama.exe install --laya                  # also run the decision model (installs Ollaya)
 ```
 
 See the [command-line reference](/docs/reference/cli/) for every option.

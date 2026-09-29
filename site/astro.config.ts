@@ -22,7 +22,7 @@ export default defineConfig({
     starlight({
       title: 'No Drama Llama',
       description:
-        'An always-on local LLM server for Windows gaming PCs that gets out of the way when you play.',
+        'An always-on local LLM and decision model for Windows gaming PCs that get out of the way when you play.',
       logo: { src: './src/assets/logo.svg', replacesTitle: false },
       favicon: '/favicon.svg',
       social: [
@@ -71,8 +71,8 @@ export default defineConfig({
           items: [
             { label: 'Chat and API', slug: 'docs/guides/api' },
             { label: 'Models and GPUs', slug: 'docs/guides/models' },
+            { label: 'Decision model (Laya)', slug: 'docs/guides/laya' },
             { label: 'Game detection', slug: 'docs/guides/game-detection' },
-            { label: 'Laya (decision model)', slug: 'docs/guides/laya' },
             { label: 'Use it from other devices', slug: 'docs/guides/network' },
             { label: 'Always-on PC', slug: 'docs/guides/always-on' },
             { label: 'Updates', slug: 'docs/guides/updates' },
