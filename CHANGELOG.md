@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.0.6]
+
 ### Fixed
 - **"Microsoft Edge can't read and write to its data directory", for good.** WebView2 never
   runs elevated: it relaunches itself through Explorer, as the signed-in user's unelevated
