@@ -304,6 +304,34 @@ jobs:
           path: "*.png"
           if-no-files-found: ignore
 
+  tmp-webview-repro:
+    # Temporary: the same window test against the released v0.0.5 exe, expected to fail.
+    name: TMP repro with v0.0.5
+    runs-on: windows-2025
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - run: Invoke-WebRequest https://github.com/singerbj/no-drama-llama/releases/download/v0.0.5/no-drama-llama.exe -OutFile no-drama-llama.exe
+      - name: setup SameUser
+        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -As SameUser -Screenshot setup-uac.png
+      - name: setup OtherAdmin
+        if: success() || failure()
+        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -As OtherAdmin -Screenshot setup-other-admin.png
+      - name: settings SameUser
+        if: success() || failure()
+        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -As SameUser -Settings -Screenshot settings-uac.png
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: tmp-repro
+          path: "*.png"
+
   rust-audit:
     name: Dependency advisories
     runs-on: ubuntu-latest
