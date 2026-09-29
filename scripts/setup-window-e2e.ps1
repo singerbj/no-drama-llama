@@ -122,7 +122,7 @@ if ($AsOtherAdmin -and (Test-Path $expect)) {
     # which the admin-only folder only gives to (elevated) administrators.
     $rights = (Get-Acl $expect).Access | Where-Object {
         $_.AccessControlType -eq 'Allow' -and
-        $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq $sessionSid
+        $(try { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { '' }) -eq $sessionSid
     } | ForEach-Object { $_.FileSystemRights }
     "Rights of $sessionUser on ${expect}: $($rights -join ', ')"
     $modify = [Security.AccessControl.FileSystemRights]::Modify
