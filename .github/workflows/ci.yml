@@ -285,10 +285,18 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: no-drama-llama-exe
-      - name: Elevated as the signed-in user (UAC)
-        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -Screenshot uac.png
-      - name: Elevated as another admin account (as under Administrator Protection)
-        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -AsOtherAdmin -Screenshot other-admin.png
+      # Each runs even if another failed, to report all of them.
+      - name: Setup window, elevated by UAC (Explorer unelevated as the same user)
+        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -As SameUser -Screenshot setup-uac.png
+      - name: Setup window, elevated as another admin (as under Administrator Protection)
+        if: success() || failure()
+        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -As OtherAdmin -Screenshot setup-other-admin.png
+      - name: Settings window, elevated by UAC
+        if: success() || failure()
+        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -As SameUser -Settings -Screenshot settings-uac.png
+      - name: Settings window, elevated as another admin
+        if: success() || failure()
+        run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -As OtherAdmin -Settings -Screenshot settings-other-admin.png
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

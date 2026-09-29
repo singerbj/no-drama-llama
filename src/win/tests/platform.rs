@@ -20,13 +20,16 @@ fn user_sid_looks_like_a_sid() {
 #[test]
 fn signed_in_user_lookups() {
     let me = sys::current_user_sid().unwrap();
-    assert!(sys::profile_local_app_data(&me).is_some_and(|p| p.is_dir()));
     assert!(sys::account_sid(r".\no-such-user-xyz").is_err());
     if let Some(other) = sys::other_signed_in_user() {
         assert_eq!(other.sid, me);
     }
     // None in session 0 (a service), `DOMAIN\user` in a desktop session.
     if let Some(name) = sys::session_user_name() {
+        // The shell runs as the session's user.
+        if let Some(shell) = sys::shell_user_sid() {
+            assert_eq!(shell, sys::account_sid(&name).unwrap());
+        }
         let sid = sys::account_sid(&name).unwrap();
         assert!(sid.starts_with("S-1-5-"), "{name}: {sid}");
     }

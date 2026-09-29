@@ -109,13 +109,15 @@ opens the setup wizard: the same exe with `setup`, a Tauri window showing `ui/se
   The install command re-validates the plan, so the page can't skip a check.
 - **Before llama.cpp exists**, the GPU and its memory come from nvidia-smi or, for AMD and
   Intel, DXGI, so the model recommendation works on a first install.
-- **Security.** The window is elevated, so WebView2's profile lives in an admin-only folder
-  (`%ProgramFiles%\No Drama Llama\setup-webview2`, removed after exit) instead of
-  `%LOCALAPPDATA%`. Under Windows 11's Administrator Protection WebView2 drops elevation and
-  runs as the signed-in user, so the profile goes to that user's
-  `%LOCALAPPDATA%\No Drama Llama\WebView2\setup` instead (removed after exit too). That's
-  detected as an elevated process whose account isn't the Windows session's signed-in user
-  (or whose linked token is another user). The page
+- **Security.** The window is elevated, but WebView2 won't run elevated: it relaunches itself
+  through Explorer, as the signed-in user's unelevated token (another account than the
+  window's under Windows 11's Administrator Protection). So its profile lives in
+  `%ProgramFiles%\No Drama Llama\setup-webview2` (removed after exit), writable only by SYSTEM,
+  administrators and the account Explorer runs as, rather than in an admin-only folder it
+  couldn't write or the elevated account's `%LOCALAPPDATA%`. The settings window does the same
+  with `C:\LLM\data\webview2`. CI runs Explorer as an ordinary admin account with UAC's
+  filtered token before opening both windows, since a runner's built-in Administrator has an
+  elevated Explorer. The page
   only reaches its own commands, and nothing listens on a port.
 - **Closing** mid-install asks first; stopping keeps finished and partial downloads.
 - `setup.log` (in `C:\LLM\data`) keeps each run's steps and errors.
