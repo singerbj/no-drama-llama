@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **No console window after setup.** Once the setup window closed, a console window running
+  `ping` popped up for a few seconds: the step that deletes setup's leftover files after it
+  exits asked Windows for no console *and* a detached process, and Windows ignores the first
+  when given the second, so `ping` opened a console of its own. It now runs in a hidden one.
+
 ## [0.0.6]
 
 ### Fixed

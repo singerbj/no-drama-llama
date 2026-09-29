@@ -44,7 +44,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-pub const DETACHED_PROCESS: u32 = 0x0000_0008;
 
 pub fn wide(s: impl AsRef<OsStr>) -> Vec<u16> {
     s.as_ref().encode_wide().chain(Some(0)).collect()

@@ -892,12 +892,13 @@ pub fn delete_after_exit(dirs: &[(&Path, bool)]) {
             )
         })
         .collect();
-    let _ = std::process::Command::new(sys::system_tool("cmd.exe"))
+    // CREATE_NO_WINDOW alone (via `hidden`): cmd gets a hidden console that ping shares. With
+    // DETACHED_PROCESS, Windows ignores CREATE_NO_WINDOW and ping opens a visible console.
+    let _ = sys::hidden("cmd.exe")
         .raw_arg(format!(
             "/c ping -n 4 127.0.0.1 >nul & {}",
             rmdirs.join(" & ")
         ))
-        .creation_flags(sys::CREATE_NO_WINDOW | sys::DETACHED_PROCESS)
         .spawn();
 }
 
