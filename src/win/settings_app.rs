@@ -7,7 +7,7 @@ use super::sys;
 use crate::paths::APP_NAME;
 use serde_json::Value;
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -68,16 +68,28 @@ pub(crate) fn context() -> tauri::Context<tauri::Wry> {
     tauri::generate_context!()
 }
 
-/// Where an elevated window keeps its WebView2 profile: `admin_only` normally. Under Windows 11's
-/// Administrator Protection the window runs as a hidden admin account, WebView2 drops elevation
-/// and runs as the signed-in user, who can't write there ("Microsoft Edge can't read and write
-/// to its data directory"), so it gets a folder in that user's %LOCALAPPDATA% instead;
-/// admin-only isn't possible for it there.
-pub(crate) fn webview_dir(admin_only: PathBuf, name: &str) -> PathBuf {
-    match sys::other_signed_in_user().and_then(|u| u.local_app_data) {
-        Some(local) => local.join(APP_NAME).join("WebView2").join(name),
-        None => admin_only,
+/// Creates `dir` for an elevated window's WebView2 profile, writable only by SYSTEM,
+/// administrators and the account WebView2 will run as. Its default, %LOCALAPPDATA%, would be
+/// the elevated account's, and any unelevated program can write it. But WebView2 won't run
+/// elevated: it relaunches itself through Explorer, as the signed-in user's unelevated token
+/// (another account than ours under Administrator Protection), which can't write an admin-only
+/// folder ("Microsoft Edge can't read and write to its data directory"). So that account gets
+/// write access too: the shell's user, and the signed-in user in case the shell's token can't
+/// be read.
+pub(crate) fn webview_dir(dir: &Path) -> anyhow::Result<()> {
+    use anyhow::Context;
+    std::fs::create_dir_all(dir).with_context(|| format!("couldn't create {}", dir.display()))?;
+    let mut users: Vec<String> = sys::shell_user_sid()
+        .into_iter()
+        .chain(sys::current_user_sid().ok())
+        .collect();
+    users.sort();
+    users.dedup();
+    let mut sddl = String::from("D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+    for sid in &users {
+        sddl.push_str(&format!("(A;OICI;FA;;;{sid})"));
     }
+    sys::set_dacl(dir, &sddl)
 }
 
 pub fn run() -> i32 {
@@ -88,12 +100,9 @@ pub fn run() -> i32 {
             let mut builder =
                 WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()));
             if sys::is_elevated() {
-                // WebView2's profile defaults to %LOCALAPPDATA%, which unelevated programs can
-                // write to (and so plant scripts or preferences in the elevated window).
-                builder = builder.data_directory(webview_dir(
-                    crate::paths::Paths::system().data_dir.join("webview2"),
-                    "settings",
-                ));
+                let dir = crate::paths::Paths::system().data_dir.join("webview2");
+                webview_dir(&dir)?;
+                builder = builder.data_directory(dir);
             }
             builder
                 .title(APP_NAME)

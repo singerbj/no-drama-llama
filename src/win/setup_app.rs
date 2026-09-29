@@ -236,8 +236,7 @@ fn close(app: AppHandle, w: tauri::State<'_, Wizard>) {
 fn clean_up(w: &Wizard) {
     let dir = paths::install_dir();
     if w.uninstalled.load(Ordering::SeqCst) {
-        // The profile is outside the install folder under Administrator Protection.
-        install::delete_after_exit(&[(&w.webview_dir, true), (&dir, true)]);
+        install::delete_after_exit(&[(&dir, true)]);
     } else {
         // Cancelled before anything was installed: don't leave an empty folder in Program Files.
         install::delete_after_exit(&[(&w.webview_dir, true), (&dir, false)]);
@@ -253,15 +252,10 @@ pub fn run(uninstall_mode: bool) -> i32 {
             return 1;
         }
     };
-    // WebView2's profile defaults to %LOCALAPPDATA%, which unelevated programs can write to (and
-    // so plant scripts in this elevated window). Program Files is admin-only.
-    let webview_dir =
-        super::settings_app::webview_dir(paths::install_dir().join("setup-webview2"), "setup");
-    if let Err(e) = std::fs::create_dir_all(&webview_dir) {
-        sys::message(
-            &format!("Couldn't create {}: {e}", webview_dir.display()),
-            true,
-        );
+    // Program Files is admin-only, and removed with the rest after an uninstall.
+    let webview_dir = paths::install_dir().join("setup-webview2");
+    if let Err(e) = super::settings_app::webview_dir(&webview_dir) {
+        sys::message(&format!("Couldn't start setup: {e:#}"), true);
         return 1;
     }
     let wizard = Wizard {

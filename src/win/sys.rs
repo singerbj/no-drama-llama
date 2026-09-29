@@ -31,16 +31,16 @@ use windows::Win32::System::RemoteDesktop::{
 };
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
-    CreateMutexW, GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, ReleaseMutex,
-    WaitForSingleObject, INFINITE,
+    CreateMutexW, GetCurrentProcess, GetExitCodeProcess, OpenProcess, OpenProcessToken,
+    ReleaseMutex, WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Shell::{
-    FOLDERID_LocalAppData, FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW,
-    KF_FLAG_DEFAULT, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW, KF_FLAG_DEFAULT,
+    SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK,
-    MB_YESNO, SW_SHOWNORMAL,
+    GetShellWindow, GetWindowThreadProcessId, MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONERROR,
+    MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK, MB_YESNO, SW_SHOWNORMAL,
 };
 
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -206,15 +206,13 @@ pub fn account_sid(name: &str) -> Result<String> {
 /// The user signed in to Windows, when this elevated process runs as another account.
 pub struct OtherUser {
     pub sid: String,
-    /// Their `%LOCALAPPDATA%`
-    pub local_app_data: Option<PathBuf>,
 }
 
 /// The signed-in user when this process is elevated as another account, else `None` (plain UAC
 /// elevates the signed-in user themselves). Windows 11's Administrator Protection runs elevated
-/// processes as a hidden admin account, and WebView2 then drops elevation and runs as the
-/// signed-in user. Some builds make that user the elevated token's linked token; the session's
-/// user it always is (and it's also how over-the-shoulder elevation by another admin looks).
+/// processes as a hidden admin account. Some builds make the signed-in user the elevated token's
+/// linked token; the session's user it always is (and it's also how over-the-shoulder
+/// elevation by another admin looks).
 pub fn other_signed_in_user() -> Option<OtherUser> {
     if !is_elevated() {
         return None;
@@ -227,45 +225,43 @@ pub fn other_signed_in_user() -> Option<OtherUser> {
         let _ = CloseHandle(token);
         if let Some(linked) = linked {
             let sid = token_sid(linked).ok();
-            let known = SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DEFAULT, Some(linked))
-                .ok()
-                .and_then(|p| {
-                    let out = p.to_string().ok().map(PathBuf::from);
-                    CoTaskMemFree(Some(p.0 as *const _));
-                    out
-                });
             let _ = CloseHandle(linked);
             if let Some(sid) = sid {
-                // The linked token may be too weak for the shell: fall back to the profile's.
-                let local_app_data = known.or_else(|| profile_local_app_data(&sid));
-                return Some(OtherUser {
-                    sid,
-                    local_app_data,
-                });
+                return Some(OtherUser { sid });
             }
         }
         let sid = account_sid(&session_user_name()?).ok()?;
         if me.ok()? == sid {
             return None;
         }
-        let local_app_data = profile_local_app_data(&sid);
-        Some(OtherUser {
-            sid,
-            local_app_data,
-        })
+        Some(OtherUser { sid })
     }
 }
 
-/// `AppData\Local` in the profile folder of the account `sid`.
-pub fn profile_local_app_data(sid: &str) -> Option<PathBuf> {
-    let profile: String = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
-        .open_subkey(format!(
-            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}"
-        ))
-        .ok()?
-        .get_value("ProfileImagePath")
-        .ok()?;
-    Some(PathBuf::from(profile).join(r"AppData\Local"))
+/// SID of the account the desktop shell (Explorer) runs as, if there is one. That's who
+/// WebView2 runs as when started from an elevated process: it drops elevation by relaunching
+/// itself through the shell. Normally the signed-in user's unelevated token, whether this
+/// process was elevated by UAC, by Administrator Protection or by another admin.
+pub fn shell_user_sid() -> Option<String> {
+    unsafe {
+        let shell = GetShellWindow();
+        if shell.is_invalid() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(shell, Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut token = HANDLE::default();
+        let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+        let _ = CloseHandle(process);
+        opened.ok()?;
+        let sid = token_sid(token).ok();
+        let _ = CloseHandle(token);
+        sid
+    }
 }
 
 /// SYSTEM, Administrators and TrustedInstaller: the owners a folder the elevated app runs
