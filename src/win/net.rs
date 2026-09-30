@@ -44,11 +44,28 @@ pub fn telemetry_agent() -> ureq::Agent {
 
 /// A GET that, for an https URL, refuses to follow a redirect to plain http.
 fn get(agent: &ureq::Agent, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-    agent
+    let req = agent
         .get(url)
         .config()
         .https_only(url.starts_with("https://"))
-        .build()
+        .build();
+    match github_token(url) {
+        Some(token) => req.header("Authorization", format!("Bearer {token}")),
+        None => req,
+    }
+}
+
+/// `GITHUB_TOKEN`, for GitHub API calls only: unauthenticated calls share a limit of 60 an hour
+/// per IP address, which CI runners (and some networks) run out of. ureq doesn't send the header
+/// on to a redirect.
+fn github_token(url: &str) -> Option<String> {
+    if !url.starts_with("https://api.github.com/") {
+        return None;
+    }
+    std::env::var("GITHUB_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
 }
 
 pub fn get_text(agent: &ureq::Agent, url: &str) -> Result<String> {
