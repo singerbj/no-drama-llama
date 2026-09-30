@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.0.8]
+
 ### Changed
 - **Updates work like rekt clipz's and TunedUp's.** The app reads the latest release's
   `latest.json` (Tauri's updater manifest) instead of the GitHub API, so it never hits the
