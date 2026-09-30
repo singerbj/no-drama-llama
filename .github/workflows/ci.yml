@@ -306,6 +306,20 @@ jobs:
           path: "*.png"
           if-no-files-found: ignore
 
+  release-scripts:
+    name: Release scripts (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: node --test scripts/release/*.test.ts
+      - name: The version and tag resolve
+        run: echo "$(node scripts/release/version.ts tag) (previous $(node scripts/release/version.ts previous-tag))"
+
   rust-audit:
     name: Dependency advisories
     runs-on: ubuntu-latest
@@ -317,3 +331,17 @@ jobs:
         with:
           manifest-path: Cargo.toml
           command: check advisories sources
+
+  # The one check to require: it fails if any job above failed or was cancelled.
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [rust-lint, ui, rust-test, rust-build, install-e2e, setup-window-e2e, release-scripts, rust-audit]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -qE '"(failure|cancelled)"'; then exit 1; fi

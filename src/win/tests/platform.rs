@@ -342,11 +342,12 @@ fn find_file_is_recursive_and_case_insensitive() {
 
 #[test]
 fn updater_never_touches_a_dev_build() {
-    let r = crate::update::Release::parse(
-        r#"{"tag_name":"v99.0.0","assets":[{"name":"no-drama-llama.exe","browser_download_url":"http://127.0.0.1:1/x"},
-                                            {"name":"no-drama-llama.exe.minisig","browser_download_url":"http://127.0.0.1:1/y"}]}"#,
-    )
-    .unwrap();
+    let r = crate::update::Offer {
+        version: semver::Version::new(99, 0, 0),
+        url: "http://127.0.0.1:1/x".into(),
+        signature: "c2ln".into(),
+        notes: String::new(),
+    };
     let before = std::fs::read(std::env::current_exe().unwrap())
         .unwrap()
         .len();

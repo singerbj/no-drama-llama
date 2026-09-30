@@ -1,13 +1,13 @@
 // Checks that a code-signed exe is exactly the exe CI built, plus an Authenticode signature.
-// The release workflow runs it on the file SignPath returns, before the minisign step, so the
-// updater's signature never covers code that wasn't built here.
+// The release workflow's codesign job runs it on the file the signer returns, before the
+// minisign step, so the updater's signature never covers code that wasn't built here.
 //
-//   node scripts/check-signed-exe.ts <unsigned.exe> <signed.exe>
+//   node scripts/release/check-signed-exe.ts <unsigned.exe> <signed.exe>
 //
 // Signing may only change the PE checksum and the certificate table entry, pad the file to
 // 8 bytes, and append the certificate table. Every other byte must match. It doesn't check the
 // signature itself: Get-AuthenticodeSignature does that on Windows.
-import { readFileSync } from 'node:fs';
+import { readFileSync } from "node:fs";
 
 type Pe = { checksum: number; certEntry: number; certAddr: number; certSize: number };
 
@@ -17,9 +17,9 @@ function fail(message: string): never {
 }
 
 function parsePe(file: Buffer, name: string): Pe {
-  if (file.length < 0x40 || file.toString('latin1', 0, 2) !== 'MZ') fail(`${name} is not an exe`);
+  if (file.length < 0x40 || file.toString("latin1", 0, 2) !== "MZ") fail(`${name} is not an exe`);
   const pe = file.readUInt32LE(0x3c);
-  if (pe + 24 + 2 > file.length || file.toString('latin1', pe, pe + 4) !== 'PE\0\0') {
+  if (pe + 24 + 2 > file.length || file.toString("latin1", pe, pe + 4) !== "PE\0\0") {
     fail(`${name} has no PE header`);
   }
   const optional = pe + 24;
@@ -37,7 +37,7 @@ function parsePe(file: Buffer, name: string): Pe {
 }
 
 const [unsignedPath, signedPath] = process.argv.slice(2);
-if (!unsignedPath || !signedPath) fail('usage: node scripts/check-signed-exe.ts <unsigned.exe> <signed.exe>');
+if (!unsignedPath || !signedPath) fail("usage: node scripts/release/check-signed-exe.ts <unsigned.exe> <signed.exe>");
 
 const unsigned = readFileSync(unsignedPath);
 const signed = readFileSync(signedPath);
@@ -45,17 +45,17 @@ const u = parsePe(unsigned, unsignedPath);
 const s = parsePe(signed, signedPath);
 
 if (u.certAddr !== 0 || u.certSize !== 0) fail(`${unsignedPath} is already signed`);
-if (s.checksum !== u.checksum || s.certEntry !== u.certEntry) fail('the PE headers moved');
+if (s.checksum !== u.checksum || s.certEntry !== u.certEntry) fail("the PE headers moved");
 if (s.certSize === 0) fail(`${signedPath} is not signed`);
 
 // The certificate table must start right after the original bytes (8-byte aligned, zero padded)
 // and run to the end of the file.
 const padding = s.certAddr - unsigned.length;
 if (padding < 0 || padding >= 8 || s.certAddr % 8 !== 0)
-  fail('the certificate table is not appended to the original file');
-if (s.certAddr + s.certSize !== signed.length) fail('there is data after the certificate table');
+  fail("the certificate table is not appended to the original file");
+if (s.certAddr + s.certSize !== signed.length) fail("there is data after the certificate table");
 if (signed.subarray(unsigned.length, s.certAddr).some((b) => b !== 0))
-  fail('the padding before the certificate table is not zero');
+  fail("the padding before the certificate table is not zero");
 
 // Every original byte except the checksum and the certificate table entry is unchanged.
 const same = (from: number, to: number) => unsigned.subarray(from, to).equals(signed.subarray(from, to));

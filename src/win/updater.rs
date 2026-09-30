@@ -1,24 +1,37 @@
-//! Self-update: check GitHub Releases, download, verify the minisign signature, and swap the
-//! running exe (see `crate::update` for the rules).
+//! Self-update: read the latest release's `latest.json`, download, verify the minisign
+//! signature, and swap the running exe (see `crate::update` for the rules).
 
 use super::net;
 use crate::paths;
-use crate::update::{self, Release, EXE_ASSET, SIG_ASSET};
+use crate::update::{self, Offer};
 use anyhow::{anyhow, bail, Context, Result};
 use semver::Version;
 
-pub fn latest_release() -> Result<Release> {
-    let url = format!(
-        "https://api.github.com/repos/{}/releases/latest",
-        paths::REPO
-    );
-    Release::parse(&net::get_text(&net::agent(), &url)?)
+/// The latest release's offer; `None` when it has no `latest.json` (releases before 0.0.8).
+pub fn latest_offer() -> Result<Option<Offer>> {
+    let url = update::manifest_url();
+    match net::get_text(&net::agent(), &url) {
+        Ok(json) => Offer::parse(&json).map(Some),
+        Err(e) if is_not_found(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+fn is_not_found(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        matches!(
+            c.downcast_ref::<ureq::Error>(),
+            Some(ureq::Error::StatusCode(404))
+        )
+    })
 }
 
 /// A newer release, if there is one.
-pub fn check() -> Result<Option<(Release, Version)>> {
-    let r = latest_release()?;
-    Ok(update::update_candidate(&r, &update::current_version()).map(|v| (r, v)))
+pub fn check() -> Result<Option<(Offer, Version)>> {
+    let Some(offer) = latest_offer()? else {
+        return Ok(None);
+    };
+    Ok(update::update_candidate(&offer, &update::current_version()).map(|v| (offer, v)))
 }
 
 pub fn can_self_update() -> bool {
@@ -27,7 +40,7 @@ pub fn can_self_update() -> bool {
 
 /// Downloads and verifies the new exe, then replaces the running one. Only for the
 /// installed copy (never a dev build run from elsewhere).
-pub fn apply(release: &Release, version: &Version) -> Result<()> {
+pub fn apply(offer: &Offer, version: &Version) -> Result<()> {
     let key = update::update_pubkey().ok_or_else(|| {
         anyhow!("this build has no update signing key - download the new version manually")
     })?;
@@ -41,19 +54,8 @@ pub fn apply(release: &Release, version: &Version) -> Result<()> {
             paths::installed_exe().display()
         );
     }
-    let exe = release.asset(EXE_ASSET).context("release has no exe")?;
-    let sig = release
-        .asset(SIG_ASSET)
-        .context("release has no signature")?;
-    let agent = net::agent();
-    let sig_text = String::from_utf8(net::get_bytes(
-        &agent,
-        &sig.browser_download_url,
-        64 * 1024,
-    )?)?;
-    let data = net::get_bytes(&agent, &exe.browser_download_url, 256 * 1024 * 1024)?;
-    update::check_digest(exe, &data)?;
-    update::verify_signature(&data, &sig_text, key, version)?;
+    let data = net::get_bytes(&net::agent(), &offer.url, 256 * 1024 * 1024)?;
+    update::verify_signature(&data, &offer.signature, key, version)?;
 
     // Swap the files entirely inside the admin-only install folder. Windows lets a running exe
     // be renamed (not overwritten) within its volume, so: running -> .old, new -> exe. Never

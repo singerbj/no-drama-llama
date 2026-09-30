@@ -34,5 +34,5 @@ same settings in tabs.
 | **Game detection** | *Pause while gaming*; *Detect games by* (GPU usage + launchers, GPU usage only, Launchers only); *GPU: VRAM threshold* (1 – 4 GB); *GPU: 3D load threshold* (20 – 70%); *Resume after game closes* (15 seconds – 5 min); *Show GPU usage now*; *Count emulators as games*; *Use Windows' game list (Game Bar)*; *Rescan and show detected libraries* |
 | **On-screen popups** | *Show popups*, position, *Test popup* |
 | **Start with Windows** | Starts the tray app when you sign in |
-| **Update automatically** | Installs signed updates daily |
+| **Update automatically** | Installs signed updates (checks every 6 hours) |
 | **Edit settings file** | Opens [`settings.json`](/docs/reference/settings/) |

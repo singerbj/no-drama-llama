@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Updates work like rekt clipz's and TunedUp's.** The app reads the latest release's
+  `latest.json` (Tauri's updater manifest) instead of the GitHub API, so it never hits the
+  API's rate limit, and checks a minute after it starts and every 6 hours (30 minutes after a
+  failed check) instead of once a day. Update signatures use Tauri's trusted comment, which
+  names the version, and any minisign key encoding works.
+- **Release pipeline shared with the other desktop apps**: `scripts/release/` bumps the
+  version, signs updates and writes `latest.json`; Prepare release also cuts betas; a failed
+  release can be re-run on its tag; code signing also takes a `.pfx` certificate; and releases
+  now need the updater signing key (docs/releasing.md).
+
 ## [0.0.7]
 
 ### Fixed

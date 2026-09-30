@@ -98,7 +98,7 @@ For scripted installs, `install` does the same without the wizard (from a termin
 | **Decision model API** | `http://127.0.0.1:11435/api/decide`, and `/v1/systemone` for the TypeSafe SDK (when Laya is on) |
 | **On/off** | Ctrl+Alt+L, or *Turn off / Turn on* in the tray menu |
 | **Tray app closed?** | Start menu → *No Drama Llama* |
-| **Updates** | Automatic (daily), or *Check for updates* in the menu, or `no-drama-llama.exe update` |
+| **Updates** | Automatic (every 6 hours), or *Check for updates* in the menu, or `no-drama-llama.exe update` |
 
 ```bash
 # The LLM

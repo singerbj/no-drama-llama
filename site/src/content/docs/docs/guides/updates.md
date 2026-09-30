@@ -4,7 +4,7 @@ description: How No Drama Llama updates itself, and how updates are verified.
 ---
 
 With **Settings → Update automatically** on (the default), the app checks GitHub for a new
-release once a day and installs it. The model keeps running while it updates: the new version
+release a minute after it starts and every 6 hours after that, and installs it. The model keeps running while it updates: the new version
 takes over the running server without reloading it.
 
 To update now, choose **Check for updates** in the tray menu, or run:
@@ -18,10 +18,9 @@ To update now, choose **Check for updates** in the tray menu, or run:
 The updater only installs a release that:
 
 1. is newer than the installed version and isn't a pre-release
-2. matches GitHub's published digest
-3. carries a valid **minisign signature** from the project's key, which is built into the app,
-   and that signature names that exact version, so an old signed build can't be passed off as
-   a new one
+2. carries a valid **minisign signature** from the project's key, which is built into the app
+3. has a signature that names that exact version, so an old signed build can't be passed off
+   as a new one
 
 Builds made without the key (your own builds, or forks) only tell you that an update exists.
 The [architecture notes](/docs/contributing/architecture/#auto-update) have the details.

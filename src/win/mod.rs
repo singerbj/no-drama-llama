@@ -184,17 +184,16 @@ pub fn main() -> i32 {
                         "No Drama Llama {} is up to date.",
                         env!("CARGO_PKG_VERSION")
                     ),
-                    Some((release, v)) => {
-                        println!("Version {v} is available: {}", release.html_url);
+                    Some((offer, v)) => {
+                        println!("Version {v} is available: {}", offer.page_url());
                         if !updater::can_self_update()
-                            || !release.is_signed()
                             || !running_installed_copy()
                             || !sys::is_elevated()
                         {
                             println!("The tray app installs it automatically (Settings > Update automatically), or download it from the page above.");
                         } else {
                             install::stop_running(&Paths::system());
-                            updater::apply(&release, &v)?;
+                            updater::apply(&offer, &v)?;
                             install::run_task()?;
                             println!("Updated to {v}.");
                         }

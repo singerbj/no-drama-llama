@@ -23,7 +23,13 @@ use std::time::{Duration, Instant, SystemTime};
 
 const POLL: Duration = Duration::from_secs(5);
 const RESCAN: Duration = Duration::from_secs(600);
+/// Ollaya update checks.
 const UPDATE_EVERY: Duration = Duration::from_secs(24 * 3600);
+/// App update checks (the same in every desktop app): a minute after start, then every 6 hours,
+/// or 30 minutes after a failed check.
+const FIRST_APP_UPDATE_CHECK: Duration = Duration::from_secs(60);
+const APP_UPDATE_EVERY: Duration = Duration::from_secs(6 * 3600);
+const APP_UPDATE_RETRY: Duration = Duration::from_secs(30 * 60);
 
 pub type SettingsEdit = Box<dyn FnOnce(&mut Settings) + Send>;
 
@@ -39,7 +45,7 @@ pub enum Cmd {
     },
     UpdateChecked {
         manual: bool,
-        result: Result<Option<(crate::update::Release, semver::Version)>, String>,
+        result: Result<Option<(crate::update::Offer, semver::Version)>, String>,
     },
     UpdateApplied(Result<semver::Version, String>),
     /// Download a catalog model; `switch` = use it once it's there.
@@ -155,7 +161,7 @@ pub struct Worker {
     /// Whether the logon task starts the app; None = no task (not installed, e.g. tests)
     logon_start: Option<bool>,
     update: UpdateState,
-    last_update_check: Option<Instant>,
+    next_update_check: Instant,
     caps: ServerCaps,
     pc: crate::catalog::Machine,
     gpu_name: Option<String>,
@@ -238,7 +244,7 @@ impl Worker {
             health: net::health_agent(),
             logon_start: install::logon_start(),
             update: UpdateState::None,
-            last_update_check: None,
+            next_update_check: Instant::now() + FIRST_APP_UPDATE_CHECK,
             caps,
             pc,
             gpu_name,
@@ -368,10 +374,9 @@ impl Worker {
             }
             Cmd::CheckForUpdates { manual } => self.check_updates(manual),
             Cmd::UpdateChecked { manual, result } => match result {
-                Ok(Some((release, version))) => {
+                Ok(Some((offer, version))) => {
                     log!("update available: {version}");
                     if updater::can_self_update()
-                        && release.is_signed()
                         && std::env::current_exe().is_ok_and(|e| {
                             e.as_os_str()
                                 .eq_ignore_ascii_case(crate::paths::installed_exe().as_os_str())
@@ -380,7 +385,7 @@ impl Worker {
                         self.update = UpdateState::Installing(version.to_string());
                         let tx = self.tx_self.clone();
                         std::thread::spawn(move || {
-                            let r = updater::apply(&release, &version)
+                            let r = updater::apply(&offer, &version)
                                 .map(|_| version)
                                 .map_err(|e| format!("{e:#}"));
                             let _ = tx.send(Cmd::UpdateApplied(r));
@@ -408,6 +413,7 @@ impl Worker {
                 }
                 Err(e) => {
                     self.update = UpdateState::None;
+                    self.next_update_check = Instant::now() + APP_UPDATE_RETRY;
                     log!("update check failed: {e}");
                     if manual {
                         self.popup("Update check failed", e, crate::state::Tone::Error);
@@ -818,7 +824,7 @@ impl Worker {
             return;
         }
         self.update = UpdateState::Checking;
-        self.last_update_check = Some(Instant::now());
+        self.next_update_check = Instant::now() + APP_UPDATE_EVERY;
         let tx = self.tx_self.clone();
         std::thread::spawn(move || {
             let result = updater::check().map_err(|e| format!("{e:#}"));
@@ -994,11 +1000,7 @@ impl Worker {
         }
         self.tick_laya(off);
 
-        if self.s.auto_update
-            && self
-                .last_update_check
-                .is_none_or(|t| t.elapsed() >= UPDATE_EVERY)
-        {
+        if self.s.auto_update && Instant::now() >= self.next_update_check {
             self.check_updates(false);
         }
         self.send_snapshot();
