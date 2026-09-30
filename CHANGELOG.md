@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **GitHub API calls can use a token.** With `GITHUB_TOKEN` set, the installer's lookups of
+  llama.cpp and Ollaya releases send it to the GitHub API (and nowhere else), so a busy network
+  or a CI runner doesn't hit GitHub's limit of 60 unauthenticated calls an hour ("http status:
+  403").
+
 ## [0.0.8]
 
 ### Changed
