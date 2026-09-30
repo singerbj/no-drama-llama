@@ -165,6 +165,8 @@ jobs:
       run:
         shell: pwsh
     env:
+      # The installer's GitHub API calls (llama.cpp releases) would share the runner IP's 60-an-hour limit.
+      GITHUB_TOKEN: ${{ github.token }}
       EXE: ${{ github.workspace }}\no-drama-llama.exe
       INSTALLED: C:\Program Files\No Drama Llama\no-drama-llama.exe
       UNINSTALL_KEY: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NoDramaLlama
