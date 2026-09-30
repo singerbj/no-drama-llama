@@ -1,20 +1,26 @@
-//! Self-update from GitHub Releases (platform-independent part).
+//! Self-update (platform-independent part), and the GitHub release types the llama.cpp and
+//! Ollaya installers share.
 //!
-//! A release carries `no-drama-llama.exe` and `no-drama-llama.exe.minisig`: a minisign
-//! signature whose trusted comment is `no-drama-llama <version>`. The app only installs an
-//! update that is newer than itself, signed by the key baked in at build time
-//! (`NDL_UPDATE_PUBKEY`), and whose signed version matches the release. Builds without a key
-//! only report that an update exists.
+//! Every release carries `latest.json`, the updater manifest in Tauri's format (the same one
+//! rekt-clipz and tunedup read), listing `no-drama-llama.exe` and its minisign signature. The
+//! app reads it from `releases/latest/download/latest.json`, a plain download (no GitHub API
+//! rate limit; pre-releases are never "latest"). It only installs an update that is newer than
+//! itself, signed by the key baked in at build time (`NDL_UPDATE_PUBKEY`), and whose signature
+//! names that version (the `version:` field of the trusted comment, Tauri's format), so a signed
+//! older build can't be passed off as a newer one. Builds without a key only report that an
+//! update exists.
 
 use anyhow::{anyhow, bail, Context, Result};
 use semver::Version;
 use serde::Deserialize;
+use std::collections::HashMap;
 
-pub const EXE_ASSET: &str = "no-drama-llama.exe";
-pub const SIG_ASSET: &str = "no-drama-llama.exe.minisig";
+/// The `latest.json` platform this build installs.
+pub const TARGET: &str = "windows-x86_64";
 
-/// minisign public key (base64) for verifying updates, baked in from the build environment.
-/// CI passes an empty string when the repository variable isn't set: that means "no key".
+/// minisign public key for verifying updates, baked in from the build environment. Any encoding
+/// works (a `.pub` file, its base64 as `tauri signer` writes it, or the bare `RW…` line). CI
+/// passes an empty string when the repository variable isn't set: that means "no key".
 pub fn update_pubkey() -> Option<&'static str> {
     option_env!("NDL_UPDATE_PUBKEY")
         .map(str::trim)
@@ -23,6 +29,144 @@ pub fn update_pubkey() -> Option<&'static str> {
 
 pub fn current_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version is semver")
+}
+
+/// Where the latest release's manifest is.
+pub fn manifest_url() -> String {
+    format!(
+        "https://github.com/{}/releases/latest/download/latest.json",
+        crate::paths::REPO
+    )
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PlatformEntry {
+    url: String,
+    signature: String,
+}
+
+/// `latest.json`: Tauri's static form (`platforms`), or its single-platform form (`url` and
+/// `signature` at the top, what a dynamic update server sends).
+#[derive(Debug, Clone, Deserialize)]
+struct Manifest {
+    version: String,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    platforms: HashMap<String, PlatformEntry>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    signature: Option<String>,
+}
+
+/// The update the manifest offers this platform.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Offer {
+    pub version: Version,
+    /// Download of the new exe (https).
+    pub url: String,
+    /// minisign signature of the exe: the text, or its base64 (Tauri's encoding).
+    pub signature: String,
+    pub notes: String,
+}
+
+impl Offer {
+    pub fn parse(json: &str) -> Result<Offer> {
+        let m: Manifest = serde_json::from_str(json).context("unexpected latest.json")?;
+        let v = m.version.trim().trim_start_matches('v');
+        let version = Version::parse(v)
+            .with_context(|| format!("latest.json version {} is not a version", m.version))?;
+        let (url, signature) = match m.platforms.get(TARGET) {
+            Some(p) => (p.url.clone(), p.signature.clone()),
+            None => (
+                m.url
+                    .with_context(|| format!("latest.json has no {TARGET} build"))?,
+                m.signature.context("latest.json has no signature")?,
+            ),
+        };
+        if !url.starts_with("https://") {
+            bail!("latest.json has a non-https download URL: {url}");
+        }
+        if signature.trim().is_empty() {
+            bail!("latest.json has no signature");
+        }
+        Ok(Offer {
+            version,
+            url,
+            signature,
+            notes: m.notes.unwrap_or_default(),
+        })
+    }
+
+    /// The release's page, for people to download it themselves.
+    pub fn page_url(&self) -> String {
+        format!(
+            "https://github.com/{}/releases/tag/v{}",
+            crate::paths::REPO,
+            self.version
+        )
+    }
+}
+
+/// The newer version this offer brings, if it is one (pre-releases are never offered).
+pub fn update_candidate(offer: &Offer, current: &Version) -> Option<Version> {
+    (offer.version.pre.is_empty() && offer.version > *current).then(|| offer.version.clone())
+}
+
+/// minisign text of `value`: itself if it already is, else its base64 decoding.
+fn minisign_text(value: &str) -> Result<String> {
+    use base64::Engine;
+    let value = value.trim();
+    if value.contains("untrusted comment:") {
+        return Ok(value.to_string());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|e| anyhow!("not minisign text or its base64: {e}"))?;
+    String::from_utf8(bytes).map_err(|_| anyhow!("not minisign text or its base64"))
+}
+
+fn decode_public_key(value: &str) -> Result<minisign_verify::PublicKey> {
+    let value = value.trim();
+    let key = if value.starts_with("RW") && !value.contains('\n') {
+        minisign_verify::PublicKey::from_base64(value)
+    } else {
+        minisign_verify::PublicKey::decode(&minisign_text(value)?)
+    };
+    key.map_err(|e| anyhow!("bad update public key: {e}"))
+}
+
+/// The `version:` field of a trusted comment in Tauri's format
+/// (`timestamp:…\tfile:…\tversion:…`).
+pub fn signed_version(trusted_comment: &str) -> Option<&str> {
+    trusted_comment
+        .split('\t')
+        .find_map(|field| field.trim().strip_prefix("version:"))
+}
+
+/// Verifies the minisign signature and that it was made for exactly `version`.
+pub fn verify_signature(
+    data: &[u8],
+    signature: &str,
+    pubkey: &str,
+    version: &Version,
+) -> Result<()> {
+    use minisign_verify::Signature;
+    let pk = decode_public_key(pubkey)?;
+    let sig = Signature::decode(&minisign_text(signature).context("bad signature")?)
+        .map_err(|e| anyhow!("bad signature: {e}"))?;
+    pk.verify(data, &sig, false)
+        .map_err(|e| anyhow!("signature check failed: {e}"))?;
+    let signed = signed_version(sig.trusted_comment());
+    if signed.and_then(|v| Version::parse(v.trim_start_matches('v')).ok()) != Some(version.clone())
+    {
+        bail!(
+            "signature is for version {}, expected {version}",
+            signed.unwrap_or("(none)")
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,23 +211,6 @@ impl Release {
     pub fn asset(&self, name: &str) -> Option<&Asset> {
         self.assets.iter().find(|a| a.name == name)
     }
-
-    /// Whether the release carries the updater signature (needed to install it in place).
-    pub fn is_signed(&self) -> bool {
-        self.asset(SIG_ASSET).is_some()
-    }
-}
-
-/// The newer version this release offers, if it is a proper newer release with the app exe.
-/// An unsigned release still counts (users are told about it), but only a signed one is
-/// installed automatically: see [`Release::is_signed`].
-pub fn update_candidate(release: &Release, current: &Version) -> Option<Version> {
-    if release.draft || release.prerelease {
-        return None;
-    }
-    let v = release.version().ok()?;
-    // pre-release versions (2.1.0-beta) only come through as explicit GitHub pre-releases, which we skip
-    (v.pre.is_empty() && v > *current && release.asset(EXE_ASSET).is_some()).then_some(v)
 }
 
 pub fn sha256_hex(data: &[u8]) -> String {
@@ -94,193 +221,146 @@ pub fn sha256_hex(data: &[u8]) -> String {
         .collect()
 }
 
-/// Checks GitHub's digest (transport integrity) if the asset has one.
-pub fn check_digest(asset: &Asset, data: &[u8]) -> Result<()> {
-    if let Some(d) = asset
-        .digest
-        .as_deref()
-        .and_then(|d| d.strip_prefix("sha256:"))
-    {
-        let actual = sha256_hex(data);
-        if !actual.eq_ignore_ascii_case(d) {
-            bail!(
-                "{} checksum mismatch (expected {d}, got {actual})",
-                asset.name
-            );
-        }
-    }
-    Ok(())
-}
-
-/// Verifies the minisign signature and that it was made for exactly `version`.
-pub fn verify_signature(
-    data: &[u8],
-    sig_text: &str,
-    pubkey_b64: &str,
-    version: &Version,
-) -> Result<()> {
-    use minisign_verify::{PublicKey, Signature};
-    let pk = PublicKey::from_base64(pubkey_b64.trim())
-        .map_err(|e| anyhow!("bad update public key: {e}"))?;
-    let sig = Signature::decode(sig_text).map_err(|e| anyhow!("bad signature file: {e}"))?;
-    pk.verify(data, &sig, false)
-        .map_err(|e| anyhow!("signature check failed: {e}"))?;
-    let expected = format!("no-drama-llama {version}");
-    if sig.trusted_comment().trim() != expected {
-        bail!(
-            "signature is for '{}', expected '{expected}'",
-            sig.trusted_comment().trim()
-        );
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use proptest::prelude::*;
 
-    const PUB: &str = include_str!("../tests/fixtures/test-key.pub");
+    const PUB: &str = include_str!("../tests/fixtures/test.key.pub");
     const PAYLOAD: &[u8] = include_bytes!("../tests/fixtures/payload.bin");
+    /// Signed as version 2.1.0 (scripts/release/minisign.ts, Tauri's trusted comment).
     const SIG: &str = include_str!("../tests/fixtures/payload.bin.minisig");
 
-    fn release(tag: &str, assets: &[&str]) -> Release {
-        Release {
-            tag_name: tag.into(),
-            html_url: String::new(),
-            draft: false,
-            prerelease: false,
-            assets: assets
-                .iter()
-                .map(|n| Asset {
-                    name: n.to_string(),
-                    browser_download_url: format!("https://x/{n}"),
-                    size: 1,
-                    digest: None,
-                })
-                .collect(),
+    fn b64(text: &str) -> String {
+        base64::engine::general_purpose::STANDARD.encode(text)
+    }
+
+    fn manifest(version: &str) -> String {
+        format!(
+            r#"{{"version":"{version}","notes":"Fixes","pub_date":"2026-09-30T00:00:00Z",
+               "platforms":{{"windows-x86_64":{{"url":"https://github.com/x/no-drama-llama.exe","signature":"{}"}}}}}}"#,
+            b64(SIG)
+        )
+    }
+
+    #[test]
+    fn parses_latest_json() {
+        let o = Offer::parse(&manifest("2.1.0")).unwrap();
+        assert_eq!(o.version, Version::new(2, 1, 0));
+        assert_eq!(o.url, "https://github.com/x/no-drama-llama.exe");
+        assert_eq!(o.notes, "Fixes");
+        assert_eq!(minisign_text(&o.signature).unwrap().trim(), SIG.trim());
+        assert!(
+            o.page_url().ends_with("/releases/tag/v2.1.0"),
+            "{}",
+            o.page_url()
+        );
+        // Tauri's single-platform form, and a leading v.
+        let flat = Offer::parse(r#"{"version":"v2.2.0","url":"https://h/exe","signature":"c2ln"}"#)
+            .unwrap();
+        assert_eq!(
+            (flat.version, flat.url.as_str()),
+            (Version::new(2, 2, 0), "https://h/exe")
+        );
+    }
+
+    #[test]
+    fn rejects_bad_manifests() {
+        for json in [
+            "",
+            "[]",
+            r#"{"message":"Not Found"}"#,
+            r#"{"version":"latest","url":"https://h/x","signature":"s"}"#,
+            r#"{"version":"2.0.0","platforms":{"linux-x86_64":{"url":"https://h/x","signature":"s"}}}"#,
+            r#"{"version":"2.0.0","url":"http://h/x","signature":"s"}"#,
+            r#"{"version":"2.0.0","url":"https://h/x","signature":" "}"#,
+        ] {
+            assert!(Offer::parse(json).is_err(), "{json}");
         }
     }
 
     #[test]
-    fn parses_github_json() {
+    fn only_newer_full_releases() {
+        let cur = Version::new(2, 0, 0);
+        let offer = |v: &str| Offer::parse(&manifest(v)).unwrap();
+        assert_eq!(
+            update_candidate(&offer("2.1.0"), &cur),
+            Some(Version::new(2, 1, 0))
+        );
+        assert_eq!(update_candidate(&offer("2.0.0"), &cur), None);
+        assert_eq!(update_candidate(&offer("1.9.9"), &cur), None);
+        assert_eq!(update_candidate(&offer("2.1.0-beta.1"), &cur), None);
+        // semver, not string, ordering
+        assert_eq!(
+            update_candidate(&offer("2.10.0"), &Version::new(2, 9, 0)),
+            Some(Version::new(2, 10, 0))
+        );
+    }
+
+    #[test]
+    fn signature_ok_in_every_encoding() {
+        let v = Version::new(2, 1, 0);
+        verify_signature(PAYLOAD, SIG, PUB, &v).unwrap();
+        verify_signature(PAYLOAD, &b64(SIG), &b64(PUB), &v).unwrap();
+        verify_signature(PAYLOAD, SIG, PUB.lines().nth(1).unwrap(), &v).unwrap();
+        verify_signature(PAYLOAD, SIG, &format!("  {PUB}  \n"), &v).unwrap();
+    }
+
+    #[test]
+    fn signature_rejects_tampering_and_version_swap() {
+        let v = Version::new(2, 1, 0);
+        let mut bad = PAYLOAD.to_vec();
+        bad[0] ^= 1;
+        assert!(verify_signature(&bad, SIG, PUB, &v).is_err());
+        let mut longer = PAYLOAD.to_vec();
+        longer.push(0);
+        assert!(verify_signature(&longer, SIG, PUB, &v).is_err());
+        // a genuinely signed older build offered as a newer version
+        let e = verify_signature(PAYLOAD, SIG, PUB, &Version::new(9, 0, 0)).unwrap_err();
+        assert!(
+            e.to_string().contains("for version 2.1.0, expected 9.0.0"),
+            "{e}"
+        );
+        // rewriting the trusted comment breaks the global signature
+        let forged = SIG.replace("version:2.1.0", "version:9.0.0");
+        assert!(verify_signature(PAYLOAD, &forged, PUB, &Version::new(9, 0, 0)).is_err());
+        // someone else's key
+        let other = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
+        assert!(verify_signature(PAYLOAD, SIG, other, &v).is_err());
+        assert!(verify_signature(PAYLOAD, "", PUB, &v).is_err());
+        assert!(verify_signature(PAYLOAD, &SIG[..SIG.len() / 2], PUB, &v).is_err());
+        assert!(verify_signature(PAYLOAD, SIG, "not base64!", &v).is_err());
+        assert!(verify_signature(PAYLOAD, SIG, "", &v).is_err());
+    }
+
+    #[test]
+    fn reads_the_signed_version() {
+        assert_eq!(
+            signed_version("timestamp:1\tfile:no-drama-llama.exe\tversion:2.1.0"),
+            Some("2.1.0")
+        );
+        assert_eq!(signed_version("no-drama-llama 2.1.0"), None);
+    }
+
+    #[test]
+    fn parses_github_release_json() {
         let r = Release::parse(
             r#"{"tag_name":"v2.1.0","html_url":"https://github.com/x","draft":false,"prerelease":false,
-               "assets":[{"name":"no-drama-llama.exe","browser_download_url":"https://dl/exe","size":5,
+               "assets":[{"name":"llama.zip","browser_download_url":"https://dl/zip","size":5,
                           "digest":"sha256:abc","extra":1}],"body":"notes"}"#,
         )
         .unwrap();
         assert_eq!(r.version().unwrap(), Version::new(2, 1, 0));
         assert_eq!(
-            r.asset(EXE_ASSET).unwrap().digest.as_deref(),
+            r.asset("llama.zip").unwrap().digest.as_deref(),
             Some("sha256:abc")
         );
-    }
-
-    #[test]
-    fn only_newer_complete_releases() {
-        let cur = Version::new(2, 0, 0);
-        let both = [EXE_ASSET, SIG_ASSET];
-        assert_eq!(
-            update_candidate(&release("v2.1.0", &both), &cur),
-            Some(Version::new(2, 1, 0))
-        );
-        assert_eq!(update_candidate(&release("v2.0.0", &both), &cur), None);
-        assert_eq!(update_candidate(&release("v1.9.9", &both), &cur), None);
-        // Unsigned: still reported as available (just not installed automatically).
-        let unsigned = release("v2.1.0", &[EXE_ASSET]);
-        assert_eq!(
-            update_candidate(&unsigned, &cur),
-            Some(Version::new(2, 1, 0))
-        );
-        assert!(!unsigned.is_signed());
-        assert!(release("v2.1.0", &both).is_signed());
-        assert_eq!(
-            update_candidate(&release("v2.1.0", &[SIG_ASSET]), &cur),
-            None,
-            "no exe"
-        );
-        assert_eq!(update_candidate(&release("nightly", &both), &cur), None);
-        let mut pre = release("v3.0.0", &both);
-        pre.prerelease = true;
-        assert_eq!(update_candidate(&pre, &cur), None);
-    }
-
-    #[test]
-    fn signature_ok() {
-        verify_signature(PAYLOAD, SIG, PUB, &Version::new(2, 1, 0)).unwrap();
-    }
-
-    #[test]
-    fn signature_rejects_tampering_and_version_swap() {
-        let mut bad = PAYLOAD.to_vec();
-        bad[0] ^= 1;
-        assert!(verify_signature(&bad, SIG, PUB, &Version::new(2, 1, 0)).is_err());
-        // a genuinely signed older build re-uploaded under a newer tag
-        let e = verify_signature(PAYLOAD, SIG, PUB, &Version::new(9, 0, 0)).unwrap_err();
-        assert!(
-            e.to_string().contains("expected 'no-drama-llama 9.0.0'"),
-            "{e}"
-        );
-        // someone else's key
-        let other = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
-        assert!(verify_signature(PAYLOAD, SIG, other, &Version::new(2, 1, 0)).is_err());
-    }
-
-    #[test]
-    fn digest_check() {
-        let mut a = release("v2.1.0", &[EXE_ASSET]).assets.remove(0);
-        a.digest = Some(format!("sha256:{}", sha256_hex(b"abc")));
-        check_digest(&a, b"abc").unwrap();
-        assert!(check_digest(&a, b"abd").is_err());
-        a.digest = None;
-        check_digest(&a, b"anything").unwrap();
-    }
-}
-
-#[cfg(test)]
-mod more_tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    const PUB: &str = include_str!("../tests/fixtures/test-key.pub");
-    const PAYLOAD: &[u8] = include_bytes!("../tests/fixtures/payload.bin");
-    const SIG: &str = include_str!("../tests/fixtures/payload.bin.minisig");
-
-    fn rel(tag: &str) -> Release {
-        Release::parse(&format!(
-            r#"{{"tag_name":"{tag}","assets":[{{"name":"{EXE_ASSET}","browser_download_url":"u"}},{{"name":"{SIG_ASSET}","browser_download_url":"u"}}]}}"#
-        ))
-        .unwrap()
-    }
-
-    #[test]
-    fn version_parsing() {
-        assert_eq!(rel("v2.1.0").version().unwrap(), Version::new(2, 1, 0));
-        assert_eq!(rel("2.1.0").version().unwrap(), Version::new(2, 1, 0));
-        assert!(rel("v2.1").version().is_err());
-        assert!(rel("latest").version().is_err());
-    }
-
-    #[test]
-    fn semver_ordering_not_string_ordering() {
-        let cur = Version::new(2, 9, 0);
-        assert_eq!(
-            update_candidate(&rel("v2.10.0"), &cur),
-            Some(Version::new(2, 10, 0))
-        );
-        assert_eq!(
-            update_candidate(&rel("v10.0.0"), &Version::new(9, 0, 0)),
-            Some(Version::new(10, 0, 0))
-        );
-    }
-
-    #[test]
-    fn prerelease_versions_and_drafts_are_skipped() {
-        let cur = Version::new(2, 0, 0);
-        assert_eq!(update_candidate(&rel("v2.1.0-beta.1"), &cur), None);
-        let mut d = rel("v3.0.0");
-        d.draft = true;
-        assert_eq!(update_candidate(&d, &cur), None);
+        assert!(Release::parse(r#"{"message":"API rate limit exceeded"}"#).is_err());
+        assert!(Release::parse(r#"{"tag_name":"latest"}"#)
+            .unwrap()
+            .version()
+            .is_err());
     }
 
     #[test]
@@ -289,55 +369,11 @@ mod more_tests {
     }
 
     #[test]
-    fn bad_json() {
-        assert!(Release::parse("").is_err());
-        assert!(Release::parse("[]").is_err());
-        assert!(Release::parse(r#"{"message":"API rate limit exceeded"}"#).is_err());
-        let r = Release::parse(r#"{"tag_name":"v1.0.0"}"#).unwrap();
-        assert!(r.assets.is_empty());
-        assert_eq!(update_candidate(&r, &Version::new(0, 1, 0)), None);
-    }
-
-    #[test]
-    fn signature_edge_cases() {
-        let v = Version::new(2, 1, 0);
-        assert!(
-            verify_signature(PAYLOAD, SIG, &format!("  {PUB}  \n"), &v).is_ok(),
-            "whitespace around key is fine"
-        );
-        assert!(verify_signature(b"", SIG, PUB, &v).is_err());
-        assert!(verify_signature(PAYLOAD, "", PUB, &v).is_err());
-        assert!(
-            verify_signature(PAYLOAD, &SIG[..SIG.len() / 2], PUB, &v).is_err(),
-            "truncated signature"
-        );
-        assert!(verify_signature(PAYLOAD, SIG, "not base64!", &v).is_err());
-        assert!(verify_signature(PAYLOAD, SIG, "", &v).is_err());
-        // swap the trusted comment: the global signature no longer matches
-        let forged = SIG.replace("no-drama-llama 2.1.0", "no-drama-llama 9.9.9");
-        assert!(verify_signature(PAYLOAD, &forged, PUB, &Version::new(9, 9, 9)).is_err());
-        // appended data
-        let mut longer = PAYLOAD.to_vec();
-        longer.push(0);
-        assert!(verify_signature(&longer, SIG, PUB, &v).is_err());
-    }
-
-    #[test]
-    fn digest_is_case_insensitive_and_ignores_other_algorithms() {
-        let hex = sha256_hex(b"abc");
+    fn sha256() {
         assert_eq!(
-            hex,
+            sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        let mut a = Asset {
-            name: "x".into(),
-            browser_download_url: "u".into(),
-            size: 3,
-            digest: Some(format!("sha256:{}", hex.to_uppercase())),
-        };
-        check_digest(&a, b"abc").unwrap();
-        a.digest = Some("sha512:zzz".into());
-        check_digest(&a, b"anything").unwrap();
     }
 
     proptest! {
@@ -347,9 +383,9 @@ mod more_tests {
         }
 
         #[test]
-        fn release_parsing_never_panics(json in ".{0,300}") {
-            if let Ok(r) = Release::parse(&json) {
-                let _ = update_candidate(&r, &Version::new(1, 0, 0));
+        fn manifest_parsing_never_panics(json in ".{0,300}") {
+            if let Ok(o) = Offer::parse(&json) {
+                let _ = update_candidate(&o, &Version::new(1, 0, 0));
             }
         }
 

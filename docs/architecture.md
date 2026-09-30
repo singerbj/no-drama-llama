@@ -48,7 +48,7 @@ The Windows modules gather inputs and carry out actions.
  Ctrl+Alt+L hotkey                               list processes, sample GPU counters, detect game
  popups            ◄── UiMsg (State, Popup) ──   /health check (≤ 700 ms)
                                                  Machine::step → start/stop llama-server
-                                                 daily update check (on its own thread)
+                                                 update check every 6 h (on its own thread)
 ```
 
 The UI thread never blocks, so the menu stays responsive while a model loads.
@@ -241,15 +241,17 @@ C:\LLM\                 Administrators + SYSTEM: full, Users: read (inheritance 
 
 ## Auto-update
 
-1. The app checks `releases/latest` daily if *Update automatically* is on, or on demand from the menu.
-2. It reports any newer, non-prerelease semver release that has `no-drama-llama.exe`, but only
-   installs one that also has `no-drama-llama.exe.minisig` (otherwise it just says a new version
-   exists).
-3. It downloads both and checks GitHub's asset digest. It then verifies the **minisign
-   signature** against the public key baked in at build time (`NDL_UPDATE_PUBKEY`). The
-   signature's trusted comment must be exactly `no-drama-llama <that version>`, so a validly
-   signed old build can't be passed off under a newer tag.
-4. It swaps the running exe inside the admin-only install folder (running exe renamed to
+The same rules as rekt clipz and TunedUp ([releasing.md](releasing.md#how-installed-apps-update)):
+
+1. With *Update automatically* on, the app reads the latest release's `latest.json` (Tauri's
+   updater manifest, from `releases/latest/download/`, so no GitHub API rate limit) a minute
+   after it starts and every 6 hours, or 30 minutes after a failed check; or on demand from the
+   menu. Pre-releases are never *latest*, so they're never offered.
+2. It downloads the exe the manifest lists for `windows-x86_64` and verifies its **minisign
+   signature** against the public key baked in at build time (`NDL_UPDATE_PUBKEY`; any minisign
+   encoding). The signature's trusted comment must carry `version:<that version>` (Tauri's
+   format), so a validly signed old build can't be passed off as a newer version.
+3. It swaps the running exe inside the admin-only install folder (running exe renamed to
    `.old`, deleted at the next start), updates the Apps & features version, and relaunches
    with `run --after-update <old>`. The new instance waits for the single-instance mutex and
    takes over the still-running `llama-server` without reloading it.

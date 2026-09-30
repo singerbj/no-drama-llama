@@ -2067,6 +2067,7 @@ name = "no-drama-llama"
 version = "0.0.7"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "global-hotkey",
  "minisign-verify",

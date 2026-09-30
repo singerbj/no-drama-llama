@@ -35,6 +35,11 @@ step "UI: install dependencies"
 step "UI: audit, format, lint, typecheck, test, build"
 (cd ui && npm run --silent check)
 
+# ---------------------------------------------------------------- release scripts (scripts/release/)
+
+step "Release scripts: tests"
+node --test scripts/release/*.test.ts
+
 # ---------------------------------------------------------------- Rust
 
 step "Rust: format"

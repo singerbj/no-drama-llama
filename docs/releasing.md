@@ -1,137 +1,142 @@
 # Releasing
 
-## One-time setup: the update signing key
+No Drama Llama, rekt clipz and TunedUp release, sign and update the same way: the same
+workflows, the same [`scripts/release/`](../scripts/release/) (only `config.ts` differs), the
+same settings names and the same updater rules. Change one, change all three.
 
-The in-app updater only installs releases signed with your minisign key. Without a key,
-releases still publish, but the app can only tell users that a new version exists.
+A release is a GitHub release tagged `vX.Y.Z` (the `version` in `Cargo.toml`) holding:
 
-1. Install [minisign](https://jedisct1.github.io/minisign/) and create a key pair without a
-   password (GitHub's secret store protects it):
-
-   ```sh
-   minisign -G -W -p minisign.pub -s minisign.key
-   ```
-
-2. In the repository settings, go to **Secrets and variables → Actions** → **Variables** and
-   add `UPDATE_PUBKEY`: the second line of `minisign.pub` (the base64 key).
-3. Go to **Environments**, create an environment named `release`, and configure it:
-   - **Deployment branches and tags** → *Selected branches and tags* → add the tag rule `v*`.
-   - **Required reviewers** → yourself (so every signed release needs a click to approve).
-   - **Environment secrets** → `UPDATE_SIGNING_KEY`: the full contents of `minisign.key`.
-
-   Keep the key off the repository-level secrets: those are readable by a workflow on any
-   pushed branch, while an environment secret only reaches the approved `publish` job.
-4. Under **Rules → Rulesets**, add a tag ruleset for `v*` that restricts creation, update and
-   deletion to administrators.
-5. Store `minisign.key` offline somewhere safe, then delete the local copy.
-
-The public key is compiled into every release build. If you rotate it, the next release must
-still be signed with the old key, because installed apps only trust the key they were built
-with.
+| File | What it is |
+| --- | --- |
+| `no-drama-llama.exe` | The app. It installs itself when run. Authenticode-signed once code signing is set up. |
+| `no-drama-llama.exe.minisig` | Its minisign signature. The trusted comment names the version (Tauri's format, `timestamp:…\tfile:…\tversion:X.Y.Z`). |
+| `latest.json` | The updater manifest in Tauri's format: version, notes, and the exe's URL and signature. Installed apps read it. |
+| `SHA256SUMS` | Checksums of the three files above. |
 
 ## Cutting a release
 
-### From the Actions tab
+**Actions → Prepare release → Run workflow** on `main`. Pick the bump (`patch`, `minor`,
+`major`, or a `pre*` bump for a beta) or type an exact version, and tick *Dry run* to see the
+diff without pushing. After you approve the `release-prep` environment it:
 
-Once the one-time setup below is done, go to **Actions → Prepare release → Run workflow** on
-`main` and pick the bump (patch, minor or major) or type an exact version. After you approve the
-`release-prep` environment, it:
-1. bumps `version` in `Cargo.toml` and `Cargo.lock`
-   ([`scripts/prepare-release.ts`](../scripts/prepare-release.ts)) and moves the changelog's
-   `[Unreleased]` notes under the new version. It stops if `[Unreleased]` is empty.
-2. commits `Release vX.Y.Z` to `main` and pushes the tag `vX.Y.Z` in one atomic push, so the
-   tag is only created if `main` took the commit. If someone merged to `main` in the meantime,
-   the push fails and you can run it again.
-3. the tag starts the **Release** workflow below, with its usual approvals.
+1. bumps the version in `Cargo.toml` and `Cargo.lock` and moves the changelog's
+   `[Unreleased]` notes under it ([`scripts/release/version.ts`](../scripts/release/version.ts)).
+   It stops if `[Unreleased]` is empty.
+2. commits `chore(release): vX.Y.Z` to `main` and pushes the tag `vX.Y.Z` in one atomic push,
+   so the tag only exists if `main` took the commit.
+3. starts **Release** on the tag.
 
-Tick *Dry run* to see the version and diff without pushing anything.
+**Release** then runs four jobs:
 
-The same script works locally: `node scripts/prepare-release.ts minor`.
+1. **Version**: the tag must match `Cargo.toml` and point at a commit on `main`.
+2. **Build** (Windows): runs the tests, builds the exe with the updater's public key baked in,
+   and smoke-tests it.
+3. **Code signing**: Authenticode through SignPath or a certificate, if set up (below). It checks
+   the signed file is the CI build byte for byte plus a valid, timestamped signature. Without
+   code signing the exe passes through unsigned.
+4. **Publish** (waits for approval on the `release` environment): signs the exe for the updater
+   and checks the signature against `UPDATE_PUBKEY`, writes `latest.json` (notes generated from
+   the PRs since the previous release) and `SHA256SUMS`, uploads everything to a draft release,
+   downloads it again to check the checksums, and publishes it. Versions with a pre-release
+   part (`1.2.0-beta.1`) are published as GitHub pre-releases and never become *latest*.
 
-#### One-time setup: the release App
+By hand instead: `node scripts/release/version.ts bump patch` (or `set 1.2.3`), commit, and
+push the tag `node scripts/release/version.ts tag` prints. To retry a release that failed, run
+**Release** on its tag (*Use workflow from → Tags*). A release that's already published is
+never changed: release a new version instead.
 
-The workflow pushes with a GitHub App's token instead of `GITHUB_TOKEN`: only administrators
-may create `v*` tags, and a tag pushed with `GITHUB_TOKEN` wouldn't start the Release workflow.
+## How installed apps update
 
-1. Create a GitHub App under **Settings → Developer settings → GitHub Apps → New GitHub App**
-   (for example *no-drama-llama-release*): no webhook, the repository permission
-   **Contents: Read and write** and nothing else, installable only on your account. Install it
-   on this repository only.
-2. Note its **Client ID** and generate a **private key**.
-3. In the repository settings:
-   - **Secrets and variables → Actions → Variables**: add `RELEASE_APP_CLIENT_ID`.
-   - **Environments**: create `release-prep`, then set **Deployment branches and tags** to the
-     branch `main`, **Required reviewers** to yourself, and the **environment secret**
-     `RELEASE_APP_PRIVATE_KEY` to the contents of the `.pem` file.
-   - **Rules → Rulesets**: add the App to the bypass list of the `v*` tag ruleset and of
-     whatever protects `main` (required pull requests, status checks), so it can push the
-     release commit and the tag.
-4. Delete the local `.pem` file.
+With *Update automatically* on (the default), the app reads
+`https://github.com/singerbj/no-drama-llama/releases/latest/download/latest.json` a minute
+after it starts and every 6 hours (30 minutes after a failed check). *Check for updates* in the
+tray menu, or `no-drama-llama.exe update`, checks now. It installs a release only if:
 
-### By hand
+1. it's newer than the running version and not a pre-release;
+2. the exe's minisign signature checks out against the public key compiled into the app
+   (`NDL_UPDATE_PUBKEY`, from the `UPDATE_PUBKEY` variable);
+3. the signature names that exact version, so a validly signed old build can't be passed off as
+   a new one.
 
-1. Bump `version` in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
-2. Add a `CHANGELOG.md` entry.
-3. Commit, then tag and push:
+It then swaps the exe in the install folder and restarts into it; `llama-server` keeps running.
+Builds without the key (local builds, forks) only say that a new version exists.
 
-   ```sh
-   git tag v2.0.1 && git push origin v2.0.1
-   ```
+## One-time setup
 
-The **Release** workflow then:
-1. checks that the tagged commit is on `main` and that the tag matches the crate version
-2. runs the tests
-3. builds the exe with the public key baked in
-4. has SignPath Authenticode-sign it, if that's set up (see below)
-5. waits for approval on the `release` environment, then signs it with trusted comment `no-drama-llama <version>`, verifies the signature, and writes
-   `SHA256SUMS`
-6. publishes the release
+### Updater signing key
 
-Installed apps with *Update automatically* on pick it up within 24 hours. Users can also choose
-*Check for updates* in the tray menu or run `no-drama-llama.exe update`.
+Run this on your own machine, with the [GitHub CLI](https://cli.github.com) logged in as a
+repository admin:
 
-## Optional setup: Windows code signing (SignPath Foundation)
+```sh
+node scripts/release/setup-secrets.ts
+```
+
+It creates a password-protected key pair in `~/.release-keys/` (with `tauri signer generate`,
+or pass `--key <file>` to use one you have), and stores:
+
+| Where | Name | Value |
+| --- | --- | --- |
+| Repository variable | `UPDATE_PUBKEY` | the public key (any minisign format) |
+| `release` environment secret | `UPDATE_SIGNING_KEY` | the secret key (minisign or `tauri signer` format) |
+| `release` environment secret | `UPDATE_SIGNING_KEY_PASSWORD` | its password |
+
+It also creates the `release-prep`, `codesign` and `release` environments, limited to `main`
+or to `v*` tags, with you as a required reviewer of `release-prep` and `release`.
+
+Back up the key file and its password. The public key is compiled into every build, so if the
+key is lost, installed copies can never update themselves again, and a new key only reaches
+users who install a new build by hand.
+
+Then, under **Settings → Rules → Rulesets**, add a tag ruleset for `v*` that restricts
+creation, update and deletion to administrators (and the release App below).
+
+### Release App (optional)
+
+Without it, Prepare release pushes with `GITHUB_TOKEN`, which needs Actions to be allowed to
+push to `main` and can't bypass rulesets. With a GitHub App it can:
+
+1. Create a GitHub App (**Settings → Developer settings → GitHub Apps**) with no webhook and only
+   the repository permission **Contents: Read and write**, and install it on this repository.
+2. Add the repository variable `RELEASE_APP_CLIENT_ID` (its client ID) and the `release-prep`
+   environment secret `RELEASE_APP_PRIVATE_KEY` (a private key it generates).
+3. Add the App to the bypass list of the `v*` tag ruleset and of whatever protects `main`.
+
+### Code signing (optional)
 
 Without an Authenticode signature, SmartScreen shows "Windows protected your PC" on first run.
-[SignPath Foundation](https://signpath.org/) signs open-source projects for free. The release
-workflow's `codesign` job uses it once it's set up, and passes the exe through unsigned until
-then.
+The **Code signing** job uses one of these, on the `codesign` environment:
 
-1. [Apply to SignPath Foundation](https://signpath.org/apply). The README's
-   [Code signing policy](https://github.com/singerbj/no-drama-llama#code-signing-policy)
-   section covers what they ask the project to publish. Every GitHub account with write access
-   needs two-factor authentication.
-2. Once you're accepted, set up the project on [signpath.io](https://app.signpath.io):
-   - Install the [SignPath GitHub App](https://github.com/apps/signpath) on this repository
-     and link the predefined **GitHub.com** trusted build system to the project.
-   - Name the project `no-drama-llama`, or set the repository variable `SIGNPATH_PROJECT_SLUG`.
-   - Paste [`.signpath/artifact-configuration.xml`](../.signpath/artifact-configuration.xml)
-     into the project's artifact configuration and make it the default. It only signs
-     `no-drama-llama.exe` with product name *No Drama Llama* and the release's version.
-   - Use the `release-signing` signing policy (or set `SIGNPATH_SIGNING_POLICY_SLUG`), and
-     create an API token for a CI user who may submit to it.
-3. In the repository settings, add the variable `SIGNPATH_ORGANIZATION_ID` (from signpath.io),
-   then go to **Environments**, create `codesign`, and configure it:
-   - **Deployment branches and tags** → *Selected branches and tags* → add the tag rule `v*`.
-   - **Environment secrets** → `SIGNPATH_API_TOKEN`: the token from step 2.
+- **SignPath** ([SignPath Foundation](https://signpath.org/) signs open-source projects for
+  free): the variable `SIGNPATH_ORGANIZATION_ID` and the secret `SIGNPATH_API_TOKEN`
+  (optionally `SIGNPATH_PROJECT_SLUG`, default `no-drama-llama`, and
+  `SIGNPATH_SIGNING_POLICY_SLUG`, default `release-signing`). SignPath fetches the exe from the
+  run and signs it once a project approver approves the request on signpath.io; the job waits
+  up to two hours. Set it up like this:
+  1. [Apply to SignPath Foundation](https://signpath.org/apply). The README's
+     [Code signing policy](https://github.com/singerbj/no-drama-llama#code-signing-policy)
+     section covers what they ask the project to publish. Every GitHub account with write
+     access needs two-factor authentication.
+  2. On [signpath.io](https://app.signpath.io), install the
+     [SignPath GitHub App](https://github.com/apps/signpath) on this repository, link the
+     predefined **GitHub.com** trusted build system to the project, paste
+     [`.signpath/artifact-configuration.xml`](../.signpath/artifact-configuration.xml) into the
+     project's artifact configuration (it only signs `no-drama-llama.exe` with product name
+     *No Drama Llama* and the release's version), and create an API token for a CI user who
+     may submit to the signing policy.
+- **A certificate**: the secrets `WINDOWS_CERTIFICATE` (the base64 of the `.pfx`) and
+  `WINDOWS_CERTIFICATE_PASSWORD`, signed with `signtool` and timestamped.
 
-   It doesn't need required reviewers: SignPath asks a project approver to approve every
-   signing request, and the workflow waits up to two hours for that.
-
-With both set, each release goes like this:
-1. SignPath fetches the exe straight from the workflow run and signs it once you approve the
-   request on signpath.io.
-2. The `codesign` job checks the result:
-   - [`scripts/check-signed-exe.ts`](../scripts/check-signed-exe.ts) confirms it's the CI
-     build byte for byte, plus a signature.
-   - `Get-AuthenticodeSignature` confirms the signature is valid, timestamped, and from
-     SignPath Foundation.
-3. The `publish` job signs that file with minisign, so the updater's signature covers the
-   Authenticode-signed exe.
-
-If only one of `SIGNPATH_ORGANIZATION_ID` and `SIGNPATH_API_TOKEN` is set, the release fails
-instead of quietly shipping an unsigned exe.
+`CODESIGN_PUBLISHER` (a variable) is the signer name the job insists on; it defaults to
+*SignPath Foundation* with SignPath. Setting half of the SignPath pair, or both SignPath and a
+certificate, fails the release instead of quietly shipping an unsigned exe.
 
 SmartScreen can still warn about the first few signed releases while the certificate builds
 reputation. After the first signed release, update the "Windows protected your PC" answers in
 the README, the troubleshooting and install pages, and the website FAQ.
+
+## Rolling back
+
+Installed apps never downgrade. To stop a bad release from spreading, mark it a pre-release
+(or delete it) on GitHub so the previous release is *latest* again, then release a fixed,
+higher version.

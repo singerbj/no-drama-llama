@@ -1,84 +1,145 @@
 name: Release
 
-# Push a tag like v0.0.1 (matching `version` in Cargo.toml) to publish:
-#   no-drama-llama.exe          the app (installs itself when run), Authenticode-signed once SignPath is set up
-#   no-drama-llama.exe.minisig  minisign signature the in-app updater checks
+# Builds, signs and publishes a release for a tag `vX.Y.Z` (the version in Cargo.toml). Prepare
+# release pushes the tag; a tag pushed by hand works the same. To retry a failed release, re-run
+# this workflow on the tag (Actions → Release → Run workflow → Use workflow from: Tags). See
+# docs/releasing.md.
+#
+# The GitHub release holds:
+#   no-drama-llama.exe          the app (installs itself when run), Authenticode-signed if codesign is set up
+#   no-drama-llama.exe.minisig  minisign signature whose trusted comment names the version (Tauri's format)
+#   latest.json                 updater manifest (Tauri format), what installed apps poll
 #   SHA256SUMS
 #
-# One-time setup (see docs/releasing.md):
-#   repository variable  UPDATE_PUBKEY       minisign public key (the base64 line of minisign.pub)
-#   environment secret   UPDATE_SIGNING_KEY  matching secret key file contents (unencrypted, `minisign -G -W`),
-#                        stored on the `release` environment, not the repository
-# Optional, for Windows code signing through SignPath Foundation (skipped until both are set):
-#   repository variable  SIGNPATH_ORGANIZATION_ID  (and optionally SIGNPATH_PROJECT_SLUG, SIGNPATH_SIGNING_POLICY_SLUG)
-#   environment secret   SIGNPATH_API_TOKEN        stored on the `codesign` environment
+# Settings (Settings → Secrets and variables → Actions; environments under Settings → Environments):
+#   variable                    UPDATE_PUBKEY                updater public key, baked into the app
+#   secret (release env)        UPDATE_SIGNING_KEY           updater secret key
+#   secret (release env)        UPDATE_SIGNING_KEY_PASSWORD  its password, if it has one
+#   optional variables          POSTHOG_PROJECT_TOKEN, POSTHOG_HOST (crash and usage reports)
+#   optional, Authenticode (codesign env): SIGNPATH_ORGANIZATION_ID (variable) + SIGNPATH_API_TOKEN,
+#                               or WINDOWS_CERTIFICATE + WINDOWS_CERTIFICATE_PASSWORD;
+#                               CODESIGN_PUBLISHER (variable): the signer name to insist on
+
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    runs-on: windows-latest
+  version:
+    name: Version
+    runs-on: ubuntu-latest
     outputs:
-      artifact-id: ${{ steps.upload.outputs.artifact-id }}
-    defaults:
-      run:
-        shell: pwsh
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Tag must point at a commit on main
-        run: |
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
-          if ($LASTEXITCODE -ne 0) { throw "$env:GITHUB_REF_NAME ($env:GITHUB_SHA) is not on main: only reviewed commits can be released" }
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master 2026-09
-        with:
-          toolchain: "1.98"
-      - name: Tag must match Cargo.toml version
-        run: |
-          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          if ("v$v" -ne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match Cargo.toml version $v" }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+      - name: Tag must match the version and be on the default branch
+        id: check
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          tag=$(node scripts/release/version.ts tag)
+          version=$(node scripts/release/version.ts get)
+          if [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::Run this on the release tag $tag (the version in the manifest), not $GITHUB_REF_TYPE $GITHUB_REF_NAME."
+            exit 1
+          fi
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::$tag ($GITHUB_SHA) is not on $DEFAULT_BRANCH: only reviewed commits are released."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then echo "prerelease=true"; else echo "prerelease=false"; fi >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (Windows x64)
+    needs: version
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Baked into the exe (src/posthog.rs); empty means no analytics.
+      POSTHOG_PROJECT_TOKEN: ${{ vars.POSTHOG_PROJECT_TOKEN }}
+      POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+      UPDATE_PUBKEY: ${{ vars.UPDATE_PUBKEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Check release settings
+        run: |
+          missing=()
+          for name in UPDATE_PUBKEY; do
+            [ -n "${!name}" ] || missing+=("variable $name")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf '::error::Missing %s (Settings → Secrets and variables → Actions; see docs/releasing.md)\n' "${missing[@]}"
+            exit 1
+          fi
+          # The updater bakes in the key in Tauri's format (any minisign format works here).
+          echo "NDL_UPDATE_PUBKEY=$(node scripts/release/minisign.ts pubkey)" >> "$GITHUB_ENV"
       - name: Build the settings window's frontend
         working-directory: ui
         run: npm ci --ignore-scripts && npm run build
-      - name: Tests
+      - name: Install Rust (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release
+      - name: Test
         run: |
           cargo build --examples --locked
           cargo test --locked
-      - name: Build (update public key baked in)
-        env:
-          NDL_UPDATE_PUBKEY: ${{ vars.UPDATE_PUBKEY }}
-          POSTHOG_PROJECT_TOKEN: ${{ vars.POSTHOG_PROJECT_TOKEN }}
-          POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+      - name: Build
+        run: cargo build --release --locked
+      - name: Smoke test
+        shell: pwsh
         run: |
-          if (-not $env:NDL_UPDATE_PUBKEY) { Write-Warning "UPDATE_PUBKEY is not set: this build can't auto-update (it will only tell users a new version exists)." }
-          cargo build --release --locked
+          New-Item -ItemType Directory dist -Force | Out-Null
+          Copy-Item target/release/no-drama-llama.exe dist/no-drama-llama.exe
+          # GUI-subsystem exe: Start-Process -Wait gives reliable exit codes.
+          $p = Start-Process dist/no-drama-llama.exe -ArgumentList 'version' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "version exited with $($p.ExitCode)" }
+          "no-drama-llama.exe: {0:N1} MB" -f ((Get-Item dist/no-drama-llama.exe).Length / 1MB)
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         id: upload
         with:
-          name: exe
-          path: target/release/no-drama-llama.exe
+          name: unsigned
+          path: dist/no-drama-llama.exe
+          if-no-files-found: error
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
 
-  # Authenticode signing, so SmartScreen shows a publisher instead of "Windows protected your PC".
-  # SignPath fetches the `exe` artifact straight from this run, signs it after a maintainer
-  # approves the request on signpath.io, and sends it back. Without SignPath set up this job
-  # passes the unsigned exe through.
+  # Authenticode, so SmartScreen names a publisher. SignPath (it approves each request on
+  # signpath.io) or a certificate (.pfx); without either the exe passes through unsigned.
   codesign:
+    name: Code signing
     needs: build
     runs-on: windows-latest
-    # Holds SIGNPATH_API_TOKEN. Restrict it to `v*` tags; the approval happens on SignPath.
     environment: codesign
     permissions:
       actions: read
@@ -86,32 +147,35 @@ jobs:
     defaults:
       run:
         shell: pwsh
+    env:
+      ASSET: no-drama-llama.exe
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          sparse-checkout: scripts/release
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: exe
+          name: unsigned
           path: unsigned
-      - name: Is code signing set up?
+      - name: Which signer?
         id: config
         env:
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
           SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
         run: |
-          if (-not $env:SIGNPATH_API_TOKEN -and -not $env:SIGNPATH_ORGANIZATION_ID) {
-            Write-Output "::warning::SignPath isn't set up - publishing an exe without a code signature (SmartScreen will warn)."
-            "enabled=false" >> $env:GITHUB_OUTPUT
-          } elseif (-not $env:SIGNPATH_API_TOKEN -or -not $env:SIGNPATH_ORGANIZATION_ID) {
-            throw "Set both SIGNPATH_ORGANIZATION_ID (variable) and SIGNPATH_API_TOKEN (secret on the codesign environment), or neither."
-          } else {
-            "enabled=true" >> $env:GITHUB_OUTPUT
+          $signpath = [bool]$env:SIGNPATH_API_TOKEN -or [bool]$env:SIGNPATH_ORGANIZATION_ID
+          if ($signpath -and -not ($env:SIGNPATH_API_TOKEN -and $env:SIGNPATH_ORGANIZATION_ID)) {
+            throw 'Set both SIGNPATH_ORGANIZATION_ID (variable) and SIGNPATH_API_TOKEN (secret on the codesign environment), or neither.'
           }
-          # The artifact configuration only signs an exe whose ProductVersion is this version.
+          if ($signpath -and $env:WINDOWS_CERTIFICATE) { throw 'Set up SignPath or WINDOWS_CERTIFICATE, not both.' }
+          $signer = if ($signpath) { 'signpath' } elseif ($env:WINDOWS_CERTIFICATE) { 'certificate' } else { 'none' }
+          if ($signer -eq 'none') { Write-Output "::warning::No code signing set up: publishing an unsigned exe (SmartScreen will warn)." }
+          "signer=$signer" >> $env:GITHUB_OUTPUT
           "version=$($env:GITHUB_REF_NAME -replace '^v', '')" >> $env:GITHUB_OUTPUT
       - name: Sign on SignPath
-        if: steps.config.outputs.enabled == 'true'
+        if: steps.config.outputs.signer == 'signpath'
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -125,70 +189,126 @@ jobs:
           # Leaves time to approve the signing request on signpath.io.
           wait-for-completion-timeout-in-seconds: 7200
           output-artifact-directory: signed
+      - name: Sign with the certificate
+        if: steps.config.outputs.signer == 'certificate'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            New-Item -ItemType Directory signed | Out-Null
+            Copy-Item "unsigned/$env:ASSET" signed/
+            & $signtool.FullName sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD "signed/$env:ASSET"
+            if ($LASTEXITCODE -ne 0) { throw "signtool exited with $LASTEXITCODE" }
+          } finally {
+            Remove-Item $pfx -ErrorAction SilentlyContinue
+          }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: steps.config.outputs.enabled == 'true'
+        if: steps.config.outputs.signer != 'none'
         with:
           node-version: 22
       - name: Check the signed exe
-        if: steps.config.outputs.enabled == 'true'
+        if: steps.config.outputs.signer != 'none'
+        env:
+          # Who must have signed it: the certificate's simple name (SignPath Foundation's own for
+          # open-source projects).
+          PUBLISHER: ${{ vars.CODESIGN_PUBLISHER || (steps.config.outputs.signer == 'signpath' && 'SignPath Foundation' || '') }}
         run: |
-          # Same code as the CI build, with only a signature added...
-          node scripts/check-signed-exe.ts unsigned/no-drama-llama.exe signed/no-drama-llama.exe
+          # The CI build byte for byte, plus a signature...
+          node scripts/release/check-signed-exe.ts "unsigned/$env:ASSET" "signed/$env:ASSET"
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          # ...and a valid, timestamped signature from SignPath Foundation.
-          $sig = Get-AuthenticodeSignature signed/no-drama-llama.exe
+          # ...that is valid and timestamped (so it outlives the certificate).
+          $sig = Get-AuthenticodeSignature "signed/$env:ASSET"
           if ($sig.Status -ne 'Valid') { throw "Authenticode signature is $($sig.Status): $($sig.StatusMessage)" }
-          if ($sig.SignerCertificate.GetNameInfo('SimpleName', $false) -ne 'SignPath Foundation') {
-            throw "Signed by '$($sig.SignerCertificate.Subject)', expected SignPath Foundation"
+          if (-not $sig.TimeStamperCertificate) { throw 'The signature has no timestamp' }
+          if ($env:PUBLISHER -and $sig.SignerCertificate.GetNameInfo('SimpleName', $false) -ne $env:PUBLISHER) {
+            throw "Signed by '$($sig.SignerCertificate.Subject)', expected $env:PUBLISHER"
           }
-          if (-not $sig.TimeStamperCertificate) { throw "The signature has no timestamp, so it would stop validating when the certificate expires" }
           Write-Output "Signed by $($sig.SignerCertificate.Subject)"
       - name: Pass the unsigned exe through
-        if: steps.config.outputs.enabled != 'true'
-        run: New-Item -ItemType Directory signed | Out-Null; Copy-Item unsigned/no-drama-llama.exe signed/
+        if: steps.config.outputs.signer == 'none'
+        run: New-Item -ItemType Directory signed | Out-Null; Copy-Item "unsigned/$env:ASSET" signed/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-exe
-          path: signed/no-drama-llama.exe
+          name: release-asset
+          path: signed/${{ env.ASSET }}
+          if-no-files-found: error
 
   publish:
-    needs: codesign
+    name: Publish
+    needs: [version, codesign]
     runs-on: ubuntu-latest
-    # The signing key lives on this environment: give it required reviewers and restrict it to
-    # `v*` tags (Settings -> Environments -> release) so a pushed tag alone can't ship an update.
+    # Holds the updater signing key: give it required reviewers and limit it to `v*` tags, so a
+    # pushed tag alone can't ship an update.
     environment: release
     permissions:
       contents: write
+    env:
+      ASSET: no-drama-llama.exe
+      TITLE: No Drama Llama
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Install minisign
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-exe
-      - name: Sign for the in-app updater
+          name: release-asset
+          path: dist
+      - name: Sign for the updater
         env:
-          SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
-          PUBKEY: ${{ vars.UPDATE_PUBKEY }}
+          UPDATE_PUBKEY: ${{ vars.UPDATE_PUBKEY }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_SIGNING_KEY_PASSWORD: ${{ secrets.UPDATE_SIGNING_KEY_PASSWORD }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          if [ -z "$SIGNING_KEY" ] && [ -z "$PUBKEY" ]; then
-            echo "::warning::No update signing key configured - publishing without a signature (auto-update disabled)."
-            exit 0
-          fi
-          if [ -z "$SIGNING_KEY" ] || [ -z "$PUBKEY" ]; then
-            echo "::error::Set both UPDATE_PUBKEY (variable) and UPDATE_SIGNING_KEY (secret), or neither."
+          if [ -z "$UPDATE_PUBKEY" ] || [ -z "$UPDATE_SIGNING_KEY" ]; then
+            echo "::error::Set the UPDATE_PUBKEY variable and the UPDATE_SIGNING_KEY secret (on the release environment); see docs/releasing.md."
             exit 1
           fi
-          umask 077
-          trap 'rm -f "$RUNNER_TEMP/update.key"' EXIT
-          printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/update.key"
-          # The trusted comment binds the signature to this exact version (the app checks it).
-          minisign -S -s "$RUNNER_TEMP/update.key" -m no-drama-llama.exe -x no-drama-llama.exe.minisig -t "no-drama-llama $version"
-          rm -f "$RUNNER_TEMP/update.key"
-          minisign -V -P "$PUBKEY" -m no-drama-llama.exe -x no-drama-llama.exe.minisig
-      - name: Checksums
-        run: sha256sum no-drama-llama.exe* > SHA256SUMS && cat SHA256SUMS
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" no-drama-llama.exe* SHA256SUMS --repo "$GITHUB_REPOSITORY" --generate-notes
+          # The trusted comment binds the signature to this version (the app checks it). Signing
+          # also checks the result against UPDATE_PUBKEY, the key the app was built with.
+          node scripts/release/minisign.ts sign "dist/$ASSET" --version "$VERSION"
+          node scripts/release/minisign.ts verify "dist/$ASSET" --version "$VERSION"
+      - name: Release notes, latest.json and checksums
+        run: |
+          previous=$(node scripts/release/version.ts previous-tag)
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" \
+            ${previous:+-f previous_tag_name="$previous"} --jq .body > notes.md
+          node scripts/release/manifest.ts "$VERSION" "dist/$ASSET.minisig" notes.md > dist/latest.json
+          (cd dist && sha256sum "$ASSET" "$ASSET.minisig" latest.json > SHA256SUMS && cat SHA256SUMS)
+      - name: Upload to a draft release
+        run: |
+          # A published release is never changed: users may already have its files.
+          if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != true ]; then
+              echo "::error::$GITHUB_REF_NAME is already published. Release a new version instead."
+              exit 1
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$TITLE $VERSION" --notes-file notes.md
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+      - name: Check the uploaded files
+        run: |
+          mkdir check && cd check
+          gh release download "$GITHUB_REF_NAME"
+          sha256sum -c SHA256SUMS
+      - name: Publish
+        run: |
+          # Pre-releases never become "latest", so installed apps (which read
+          # releases/latest/download/latest.json) skip them.
+          if [ "$PRERELEASE" = true ]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease
+          else
+            gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          fi
+          echo "Published $GITHUB_REF_NAME: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
