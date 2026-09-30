@@ -371,6 +371,7 @@ impl Worker {
                 Ok(Some((release, version))) => {
                     log!("update available: {version}");
                     if updater::can_self_update()
+                        && release.is_signed()
                         && std::env::current_exe().is_ok_and(|e| {
                             e.as_os_str()
                                 .eq_ignore_ascii_case(crate::paths::installed_exe().as_os_str())
