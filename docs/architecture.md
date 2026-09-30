@@ -242,8 +242,9 @@ C:\LLM\                 Administrators + SYSTEM: full, Users: read (inheritance 
 ## Auto-update
 
 1. The app checks `releases/latest` daily if *Update automatically* is on, or on demand from the menu.
-2. It only takes a newer, non-prerelease semver release that has both `no-drama-llama.exe` and
-   `no-drama-llama.exe.minisig`.
+2. It reports any newer, non-prerelease semver release that has `no-drama-llama.exe`, but only
+   installs one that also has `no-drama-llama.exe.minisig` (otherwise it just says a new version
+   exists).
 3. It downloads both and checks GitHub's asset digest. It then verifies the **minisign
    signature** against the public key baked in at build time (`NDL_UPDATE_PUBKEY`). The
    signature's trusted comment must be exactly `no-drama-llama <that version>`, so a validly

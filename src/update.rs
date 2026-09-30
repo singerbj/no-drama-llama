@@ -67,20 +67,23 @@ impl Release {
     pub fn asset(&self, name: &str) -> Option<&Asset> {
         self.assets.iter().find(|a| a.name == name)
     }
+
+    /// Whether the release carries the updater signature (needed to install it in place).
+    pub fn is_signed(&self) -> bool {
+        self.asset(SIG_ASSET).is_some()
+    }
 }
 
-/// The release to update to, if it is a proper newer release with the app assets.
+/// The newer version this release offers, if it is a proper newer release with the app exe.
+/// An unsigned release still counts (users are told about it), but only a signed one is
+/// installed automatically: see [`Release::is_signed`].
 pub fn update_candidate(release: &Release, current: &Version) -> Option<Version> {
     if release.draft || release.prerelease {
         return None;
     }
     let v = release.version().ok()?;
     // pre-release versions (2.1.0-beta) only come through as explicit GitHub pre-releases, which we skip
-    (v.pre.is_empty()
-        && v > *current
-        && release.asset(EXE_ASSET).is_some()
-        && release.asset(SIG_ASSET).is_some())
-    .then_some(v)
+    (v.pre.is_empty() && v > *current && release.asset(EXE_ASSET).is_some()).then_some(v)
 }
 
 pub fn sha256_hex(data: &[u8]) -> String {
@@ -183,10 +186,18 @@ mod tests {
         );
         assert_eq!(update_candidate(&release("v2.0.0", &both), &cur), None);
         assert_eq!(update_candidate(&release("v1.9.9", &both), &cur), None);
+        // Unsigned: still reported as available (just not installed automatically).
+        let unsigned = release("v2.1.0", &[EXE_ASSET]);
         assert_eq!(
-            update_candidate(&release("v2.1.0", &[EXE_ASSET]), &cur),
+            update_candidate(&unsigned, &cur),
+            Some(Version::new(2, 1, 0))
+        );
+        assert!(!unsigned.is_signed());
+        assert!(release("v2.1.0", &both).is_signed());
+        assert_eq!(
+            update_candidate(&release("v2.1.0", &[SIG_ASSET]), &cur),
             None,
-            "unsigned"
+            "no exe"
         );
         assert_eq!(update_candidate(&release("nightly", &both), &cur), None);
         let mut pre = release("v3.0.0", &both);

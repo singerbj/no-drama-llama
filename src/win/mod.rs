@@ -187,6 +187,7 @@ pub fn main() -> i32 {
                     Some((release, v)) => {
                         println!("Version {v} is available: {}", release.html_url);
                         if !updater::can_self_update()
+                            || !release.is_signed()
                             || !running_installed_copy()
                             || !sys::is_elevated()
                         {
