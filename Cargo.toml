@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 minisign-verify = "0.3"
 regex = "1"
@@ -25,10 +25,10 @@ steamlocate = "2"
 # Settings window. custom-protocol: always serve the bundled UI (we build with plain cargo).
 tauri = { version = "2.11", default-features = false, features = ["wry", "compression", "custom-protocol"] }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
-tray-icon = "0.25"
+tray-icon = "0.26"
 ureq = { version = "3", default-features = false, features = ["native-tls"] }
 winreg = "0.56"
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dxgi",
