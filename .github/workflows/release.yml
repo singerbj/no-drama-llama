@@ -124,7 +124,7 @@ jobs:
           $p = Start-Process dist/no-drama-llama.exe -ArgumentList 'version' -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw "version exited with $($p.ExitCode)" }
           "no-drama-llama.exe: {0:N1} MB" -f ((Get-Item dist/no-drama-llama.exe).Length / 1MB)
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: upload
         with:
           name: unsigned
@@ -230,7 +230,7 @@ jobs:
       - name: Pass the unsigned exe through
         if: steps.config.outputs.signer == 'none'
         run: New-Item -ItemType Directory signed | Out-Null; Copy-Item "unsigned/$env:ASSET" signed/
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-asset
           path: signed/${{ env.ASSET }}

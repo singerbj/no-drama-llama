@@ -147,7 +147,7 @@ jobs:
           if ((Run 'install --llama-cpp-tag') -ne 2) { throw 'a bad option must exit with 2' }
           $size = (Get-Item target/release/no-drama-llama.exe).Length / 1MB
           "Release exe: {0:N1} MB" -f $size
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: no-drama-llama-exe
           path: target/release/no-drama-llama.exe
@@ -301,7 +301,7 @@ jobs:
       - name: Settings window, elevated as another admin
         if: success() || failure()
         run: ./scripts/setup-window-e2e.ps1 -Exe "$PWD\no-drama-llama.exe" -As OtherAdmin -Settings -Screenshot settings-other-admin.png
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: setup-window-${{ matrix.os }}
