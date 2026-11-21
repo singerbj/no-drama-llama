@@ -28,7 +28,7 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tray-icon = "0.25"
 ureq = { version = "3", default-features = false, features = ["native-tls"] }
 winreg = "0.56"
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dxgi",
