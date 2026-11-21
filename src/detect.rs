@@ -382,7 +382,10 @@ pub fn is_not_game_path(path: &str) -> bool {
 
 /// Normalizes a library folder, or rejects it (drive roots, system folders, launcher folders).
 pub fn normalize_lib_dir(dir: &str) -> Option<String> {
-    let d = dir.trim().trim_matches('"').trim().replace('/', "\\");
+    // Quotes and whitespace in one pass, so normalizing again changes nothing
+    let d = dir
+        .trim_matches(|c: char| c.is_whitespace() || c == '"')
+        .replace('/', "\\");
     let d = d.trim_end_matches('\\');
     if d.is_empty() || d.contains("..") {
         return None;
