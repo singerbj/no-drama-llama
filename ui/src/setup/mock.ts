@@ -38,9 +38,14 @@ const catalog: CatalogEntry[] = (
     ["qwen3.8-27b:UD-IQ2_XXS", "UD-IQ2_XXS", 7.3, "gpu", "fits your GPU", false],
     ["qwen3.8-flash-next:UD-Q4_K_XL", "UD-Q4_K_XL", 111.3, "tooBig", "too big for this PC", false],
     ["qwen3.8-flash-next:UD-IQ1_S", "UD-IQ1_S", 72.5, "tooBig", "too big for this PC", false],
+    ["north-mini-code-1.0:UD-Q4_K_XL", "UD-Q4_K_XL", 19.3, "gpuAndRam", "GPU + RAM", false],
   ] as const
 ).map(([id, quant, gb, fit, note, recommended]) => {
-  const family = id.startsWith("qwen3.8-flash") ? "Qwen 3.8 Flash-Next (125B MoE)" : "Qwen 3.8 27B";
+  const family = id.startsWith("north-mini-code")
+    ? "North Mini Code 1.0 (30B MoE, coding)"
+    : id.startsWith("qwen3.8-flash")
+      ? "Qwen 3.8 Flash-Next (125B MoE)"
+      : "Qwen 3.8 27B";
   return {
     id,
     label: `${family} ${quant}  (${gb} GB)`,

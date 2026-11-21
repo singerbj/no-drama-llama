@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **North Mini Code 1.0** (Cohere's 30B-A3B coding model, from `unsloth/North-Mini-Code-1.0-GGUF`)
+  in the model catalog, Q8_0 to UD-IQ1_M (ids `north-mini-code-1.0:<quant>`). It's offered,
+  never recommended automatically, and runs with its model card's sampling (temperature 1.0,
+  top-p 0.95). It needs a llama.cpp build with the `cohere2moe` architecture.
+
 ## [0.0.9]
 
 ### Changed
