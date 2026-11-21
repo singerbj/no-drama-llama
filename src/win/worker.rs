@@ -367,6 +367,7 @@ impl Worker {
                 if self.p.off_flag.exists() {
                     let _ = std::fs::remove_file(&self.p.off_flag);
                     self.machine.reset_failures();
+                    self.llama_retry_at = None;
                     self.laya.reset();
                 } else {
                     let _ = std::fs::write(&self.p.off_flag, b"");
@@ -375,6 +376,7 @@ impl Worker {
             Cmd::Restart => {
                 self.stop_server("restart");
                 self.machine.reset_failures();
+                self.llama_retry_at = None; // retry a failed llama.cpp update now
             }
             Cmd::Edit(f) => {
                 let old = self.s.clone();
@@ -906,11 +908,7 @@ impl Worker {
                 .unwrap_or_else(|| "(build unknown)".into()),
             self.s.model
         );
-        self.popup(
-            "Updating llama.cpp",
-            format!("This model needs llama.cpp b{need} or newer"),
-            crate::state::Tone::Loading,
-        );
+        // The state machine holds the server meanwhile and says so.
         let cancel = Arc::new(AtomicBool::new(false));
         self.llama_update = Some(LlamaUpdate {
             need,
@@ -948,15 +946,20 @@ impl Worker {
                 if crate::hardware::llama_too_old(self.llama_build, Some(update.need)) {
                     // The newest release with a build for this PC is still too old.
                     self.llama_retry_at = Some(Instant::now() + LLAMA_UPDATE_RETRY);
+                    self.machine.start_failed(format!(
+                        "needs llama.cpp b{} - the newest build for this PC is {tag}",
+                        update.need
+                    ));
                 } else {
                     self.llama_retry_at = None;
                 }
-                self.popup("llama.cpp updated", tag, crate::state::Tone::Running);
             }
             Err(e) => {
                 log!("llama.cpp update failed: {e}");
                 self.llama_retry_at = Some(Instant::now() + LLAMA_UPDATE_RETRY);
-                self.popup("llama.cpp update failed", e, crate::state::Tone::Error);
+                // One error (not a run of crashes on the old build) until a retry or Restart
+                self.machine
+                    .start_failed(format!("couldn't update llama.cpp: {e}"));
             }
         }
     }
@@ -1114,6 +1117,7 @@ impl Worker {
                 && crate::paths::missing_parts(&self.p.models_dir, &self.s.model).is_empty(),
             server_exe_exists: self.p.server_exe.exists(),
             model_name: self.s.model.clone(),
+            llama_updating: self.llama_update.as_ref().map(|u| u.need),
         };
         let mut out = self.machine.step(&inputs);
         for a in std::mem::take(&mut out.actions) {

@@ -12,6 +12,8 @@ pub enum Status {
     Running,
     Paused(GameHit),
     Off,
+    /// Waiting for a newer llama.cpp (the build the model needs) to download.
+    UpdatingLlama(u32),
     Error(String),
 }
 
@@ -30,7 +32,7 @@ impl Status {
     pub fn tone(&self) -> Tone {
         match self {
             Status::Running => Tone::Running,
-            Status::Loading | Status::Starting => Tone::Loading,
+            Status::Loading | Status::Starting | Status::UpdatingLlama(_) => Tone::Loading,
             Status::Paused(_) => Tone::Paused,
             Status::Off => Tone::Off,
             Status::Error(_) => Tone::Error,
@@ -44,6 +46,7 @@ impl Status {
             Status::Running => format!("Running - {model_short}"),
             Status::Paused(g) => format!("Paused - {}", g.name),
             Status::Off => "Off".into(),
+            Status::UpdatingLlama(b) => format!("Updating llama.cpp (needs b{b}+)"),
             Status::Error(e) => format!("Error - {e}"),
         }
     }
@@ -82,6 +85,9 @@ pub struct Inputs {
     pub model_exists: bool,
     pub server_exe_exists: bool,
     pub model_name: String,
+    /// The installed llama.cpp can't load this model and a newer build (this one or later) is
+    /// downloading: hold the server rather than start it on the old build.
+    pub llama_updating: Option<u32>,
 }
 
 #[derive(Debug, Default)]
@@ -194,6 +200,15 @@ impl Machine {
         if self.game.take().is_some() {
             out.logs.push("game closed".into());
         }
+        if let Some(build) = i.llama_updating {
+            if i.server_running {
+                out.actions
+                    .push(Action::StopServer("llama.cpp too old for the model".into()));
+            }
+            self.pending = false;
+            self.set_status(Status::UpdatingLlama(build), i, &mut out);
+            return out;
+        }
 
         if !i.server_running {
             if self.pending {
@@ -268,6 +283,11 @@ impl Machine {
                 }
             }
             Status::Off => popup("LLM off", "Turned off  -  GPU freed", Tone::Off),
+            Status::UpdatingLlama(b) => popup(
+                "Updating llama.cpp",
+                format!("{m} needs llama.cpp b{b} or newer - downloading it"),
+                Tone::Loading,
+            ),
             Status::Loading => {
                 self.announce_ready = true;
                 self.load_start = Some(i.now);
@@ -278,6 +298,11 @@ impl Machine {
                     Status::Running => {
                         popup("LLM restarting", "Applying new settings...", Tone::Loading)
                     }
+                    Status::UpdatingLlama(_) => popup(
+                        "llama.cpp updated",
+                        format!("Loading {m}..."),
+                        Tone::Loading,
+                    ),
                     _ => popup("LLM on", format!("Loading {m}..."), Tone::Loading),
                 }
             }
@@ -322,6 +347,7 @@ mod tests {
                     model_exists: true,
                     server_exe_exists: true,
                     model_name: "Qwen3.8-27B-UD-Q4_K_XL.gguf".into(),
+                    llama_updating: None,
                 },
             }
         }
@@ -361,6 +387,75 @@ mod tests {
         let out = s.tick(5);
         assert_eq!(*s.m.status(), Status::Running);
         assert!(out.actions.is_empty());
+    }
+
+    #[test]
+    fn holds_the_server_while_llama_cpp_updates() {
+        let mut s = Sim::new();
+        s.i.llama_updating = Some(9626);
+        let out = s.tick(0);
+        assert!(out.actions.is_empty(), "not started on the old build");
+        assert_eq!(*s.m.status(), Status::UpdatingLlama(9626));
+        assert_eq!(s.m.status().tone(), Tone::Loading);
+        assert!(s.m.status().text("x").contains("b9626"));
+        for _ in 0..20 {
+            let out = s.tick(5);
+            assert!(out.actions.is_empty());
+            assert_eq!(out.popup, None, "no repeated popups or crash errors");
+        }
+        // The new build is in place: start, with a popup saying so
+        s.i.llama_updating = None;
+        let out = s.tick(5);
+        assert_eq!(out.actions, vec![Action::StartServer]);
+        assert_eq!(out.popup.unwrap().title, "llama.cpp updated");
+        s.i.server_ready = true;
+        s.tick(5);
+        assert_eq!(*s.m.status(), Status::Running);
+    }
+
+    #[test]
+    fn llama_cpp_update_announced_and_stops_a_doomed_server() {
+        let mut s = Sim::new();
+        s.tick(0);
+        s.i.server_ready = true;
+        s.tick(5);
+        s.i.llama_updating = Some(9626);
+        let out = s.tick(5);
+        assert!(matches!(out.actions[..], [Action::StopServer(_)]));
+        let p = out.popup.unwrap();
+        assert_eq!(p.title, "Updating llama.cpp");
+        assert!(p.subtitle.contains("b9626"));
+    }
+
+    #[test]
+    fn off_and_games_win_over_a_llama_cpp_update() {
+        let mut s = Sim::new();
+        s.i.llama_updating = Some(9626);
+        s.i.off = true;
+        s.tick(0);
+        assert_eq!(*s.m.status(), Status::Off);
+        s.i.off = false;
+        s.i.game = Some(game());
+        s.tick(5);
+        assert!(matches!(s.m.status(), Status::Paused(_)));
+    }
+
+    #[test]
+    fn failed_llama_cpp_update_is_one_error() {
+        let mut s = Sim::new();
+        s.i.llama_updating = Some(9626);
+        s.tick(0);
+        s.i.llama_updating = None;
+        s.m.start_failed("couldn't update llama.cpp: offline".into());
+        let out = s.tick(5);
+        assert!(out.actions.is_empty(), "not started on the old build");
+        assert!(
+            matches!(s.m.status(), Status::Error(e) if e.contains("update llama.cpp")),
+            "{:?}",
+            s.m.status()
+        );
+        assert_eq!(out.popup.unwrap().title, "LLM error");
+        assert_eq!(s.tick(5).popup, None, "shown once");
     }
 
     #[test]
@@ -495,6 +590,7 @@ mod more_tests {
                     model_exists: true,
                     server_exe_exists: true,
                     model_name: "Qwen3.8-27B-UD-Q4_K_XL.gguf".into(),
+                    llama_updating: None,
                 },
                 load_left: None,
                 load_ticks: 2,

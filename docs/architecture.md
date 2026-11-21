@@ -199,7 +199,9 @@ twice, and report Running only when `/health` says ready.
   selected or downloading model needs a newer build than `llama\version.txt` (or, for older
   installs, `llama-server --version`) reports, the worker downloads the newest build in the
   background, stops llama-server, swaps it in and lets the state machine start it again.
-  Failures retry after 30 minutes. The installer applies the same rule.
+  Meanwhile the state machine's `llama_updating` input holds the server in
+  `Status::UpdatingLlama` instead of starting it on a build that can't load the model. A failure
+  becomes one `Status::Error`; it retries after 30 minutes, or on Restart / turning it on. The installer applies the same rule.
 - **Sizing:** llama.cpp's `--fit` (on by default, detected from `llama-server --help`) sets
   everything we leave unset to fit the free device memory:
   - GPU layers

@@ -91,6 +91,7 @@ impl Sim {
             model_exists: true,
             server_exe_exists: true,
             model_name: self.s.model.clone(),
+            llama_updating: None,
         });
         for a in out.actions {
             match a {
