@@ -27,7 +27,16 @@ The [architecture notes](/docs/contributing/architecture/#auto-update) have the 
 
 ## llama.cpp
 
-The app doesn't update llama.cpp on its own. To get the latest build:
+When the model you've picked (or one you're downloading) needs a newer llama.cpp than the
+one installed, for example North Mini Code (b9626 or newer), the app updates llama.cpp by
+itself. It downloads the newest build in the background, and the tray shows *Updating
+llama.cpp* meanwhile (the LLM waits rather than failing on the old build). Then it loads the
+model with the new build. A popup says when it starts and when it's done. If the download
+fails, the LLM shows the error, and the app tries again 30 minutes later, or right away when
+you click **Restart**. This works after an app update too, because the new version checks as
+it starts.
+
+Otherwise the app keeps the llama.cpp it has. To get the latest build anyway:
 
 ```powershell
 .\no-drama-llama.exe install --update-llama-cpp

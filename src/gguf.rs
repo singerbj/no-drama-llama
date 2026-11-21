@@ -48,6 +48,27 @@ pub fn head_dims(mut r: impl Read) -> Option<(u32, u32)> {
     Some((u32::try_from(k).ok()?, u32::try_from(v).ok()?))
 }
 
+/// The model's `general.architecture` (e.g. `cohere2moe`), None if the file isn't GGUF v2+ or
+/// doesn't say.
+pub fn architecture(mut r: impl Read) -> Option<String> {
+    let mut magic = [0; 4];
+    r.read_exact(&mut magic).ok()?;
+    if &magic != MAGIC || !(2..=3).contains(&read_u32(&mut r).ok()?) {
+        return None;
+    }
+    let _tensors = read_u64(&mut r).ok()?;
+    let kvs = read_u64(&mut r).ok()?;
+    for _ in 0..kvs {
+        let key = read_string(&mut r).ok()?;
+        let ty = read_u32(&mut r).ok()?;
+        if key == "general.architecture" && ty == STRING {
+            return read_string(&mut r).ok();
+        }
+        skip_value(&mut r, ty).ok()?;
+    }
+    None
+}
+
 const STRING: u32 = 8;
 const ARRAY: u32 = 9;
 
@@ -186,6 +207,26 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn reads_the_architecture() {
+        let f = gguf(
+            3,
+            &[
+                ("general.type", V::Str("model")),
+                ("tokenizer.ggml.tokens", V::Strs(&["a", "b"])),
+                ("general.architecture", V::Str("cohere2moe")),
+                ("cohere2moe.block_count", V::U32(49)),
+            ],
+        );
+        assert_eq!(architecture(&f[..]).as_deref(), Some("cohere2moe"));
+        let none = gguf(3, &[("general.name", V::Str("x"))]);
+        assert_eq!(architecture(&none[..]), None);
+        assert_eq!(architecture(&b"GGUF"[..]), None);
+        assert_eq!(architecture(&b"not a gguf file"[..]), None);
+        let wrong_type = gguf(3, &[("general.architecture", V::U32(1))]);
+        assert_eq!(architecture(&wrong_type[..]), None);
     }
 
     #[test]

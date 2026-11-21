@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc ca62bf848185cce564a10fcb275c51878e18518d32d2f1213c9a13d1bf2e43a6 # shrinks to dir = "\"\u{b}/¡"
+cc 2ae8673acb66c3760e920fb7bd52ba7ee9cdb7e454ee891a166e2e9faa7f917f # shrinks to dir = "\"\u{b}\"\\¡"

@@ -198,6 +198,7 @@ model* and `no-drama-llama.exe models`:
 | --- | --- | --- |
 | **Qwen 3.8 27B** (dense) | Q8_0 29 GB → UD-IQ2_XXS 7.3 GB | Anything that fits entirely on the GPU: fast |
 | **Qwen 3.8 Flash-Next** (125B MoE, 6B active) | 72 – 111 GB | PCs with lots of RAM (96 GB+). Most of it lives in RAM and it stays fast, because only 6B parameters run per token. |
+| **North Mini Code 1.0** (Cohere, 30B MoE, 3B active) | Q8_0 32 GB → UD-IQ1_M 9.4 GB | Coding and agentic tasks. Never recommended automatically: pick it yourself. Needs llama.cpp b9626 or newer; the app updates llama.cpp for it automatically. |
 
 Each model is marked *fits your GPU*, *GPU + RAM*, *partly in RAM - slow* or *too big for this
 PC*, and the best one for your PC gets a ★. For example:
@@ -213,8 +214,8 @@ PC*, and the best one for your PC gets a ★. For example:
 
 Downloads run in the background (progress shows in the menu, and you can click to cancel) and
 switch over when they finish. Any other GGUF you put in `C:\LLM\models` also shows up. Qwen's
-sampling and reasoning settings are only applied to Qwen models; other models use their own
-defaults.
+sampling and reasoning settings are only applied to Qwen models, North Mini Code gets its model
+card's sampling (temperature 1.0, top-p 0.95), and other models use their own defaults.
 
 ## Optional: survive power cuts and restarts
 

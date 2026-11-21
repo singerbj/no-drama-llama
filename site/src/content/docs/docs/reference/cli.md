@@ -25,7 +25,7 @@ After installing, the exe lives at `C:\Program Files\No Drama Llama\no-drama-lla
 
 | Option | What it does |
 | --- | --- |
-| `--model <id\|auto\|none>` | Model to download. `auto` (the default) picks the best for your GPU. Ids come from `models`, e.g. `qwen3.8-27b:UD-Q4_K_XL` or `qwen3.8-flash-next:UD-Q2_K_XL`. |
+| `--model <id\|auto\|none>` | Model to download. `auto` (the default) picks the best for your GPU. Ids come from `models`, e.g. `qwen3.8-27b:UD-Q4_K_XL` `qwen3.8-flash-next:UD-Q2_K_XL` or `north-mini-code-1.0:UD-Q4_K_XL`. |
 | `--skip-model` | Same as `--model none` |
 | `--backend <name>` | llama.cpp build: `auto` (the default), `vulkan`, `cuda12`, `cuda13` |
 | `--skip-power-settings` | Leaves the power plan alone |

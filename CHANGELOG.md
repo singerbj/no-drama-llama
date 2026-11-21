@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **North Mini Code 1.0** (Cohere's 30B-A3B coding model, from `unsloth/North-Mini-Code-1.0-GGUF`)
+  in the model catalog, Q8_0 to UD-IQ1_M (ids `north-mini-code-1.0:<quant>`). It's offered,
+  never recommended automatically, and runs with its model card's sampling (temperature 1.0,
+  top-p 0.95). It needs llama.cpp b9626 or newer (the `cohere2moe` architecture).
+- **llama.cpp updates itself when a model needs it.** When the selected model, or one being
+  downloaded, needs a newer llama.cpp than the installed one (an architecture added since),
+  the app downloads the newest build in the background and swaps it in. Meanwhile the status
+  reads *Updating llama.cpp*: the model isn't started on the old build, so there are no crash
+  errors, and a failed update is one clear error that **Restart** retries. This also covers updating the app itself: the new version
+  checks as it starts. The installer does the same, and `llama\version.txt` now records which
+  release is installed (older installs are read with `llama-server --version`).
+
+### Fixed
+- **llama.cpp updates can't leave it broken.** A new build is unpacked next to the old one and
+  swapped in, so a bad download keeps the old build working.
+- Game library folders with quotes and whitespace mixed at the ends are cleaned up the same way
+  every time.
+
 ## [0.0.9]
 
 ### Changed

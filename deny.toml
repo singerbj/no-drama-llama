@@ -6,6 +6,11 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 [advisories]
 # Flag unmaintained crates we depend on directly; transitive ones are the upstream's call.
 unmaintained = "workspace"
+ignore = [
+  # chrono is unmaintained (no fixed version). It only formats local timestamps for logs and
+  # file names here; drop this once it's replaced with jiff or time.
+  { id = "RUSTSEC-2026-0543", reason = "unmaintained, no vulnerability; only used to format local timestamps" },
+]
 
 [sources]
 # Only crates.io: no git dependencies or other registries can slip into the lockfile.

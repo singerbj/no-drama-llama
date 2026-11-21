@@ -16,6 +16,7 @@ the catalog:
 | --- | --- | --- |
 | **Qwen 3.8 27B** (dense) | Q8_0 29 GB → UD-IQ2_XXS 7.3 GB | Anything that fits entirely on the GPU: fast |
 | **Qwen 3.8 Flash-Next** (125B MoE, 6B active) | 72 – 111 GB | PCs with lots of RAM (96 GB+). Most of it lives in RAM and it stays fast, because only 6B parameters run per token. |
+| **North Mini Code 1.0** (Cohere, 30B MoE, 3B active) | Q8_0 32 GB → UD-IQ1_M 9.4 GB | Coding and agentic tasks. Never recommended automatically: pick it yourself. Needs llama.cpp b9626 or newer; the app updates llama.cpp for it automatically. |
 
 Each model is marked with how well it fits your PC:
 

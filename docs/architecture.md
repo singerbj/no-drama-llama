@@ -190,7 +190,18 @@ twice, and report Running only when `/health` says ready.
 
   The installer downloads that llama.cpp build, plus the CUDA runtime zip for CUDA. If a
   release lacks the build, it falls back to CUDA 12 and then Vulkan. It records the result in
-  `llama\backend.txt` and reinstalls if the GPU changes.
+  `llama\backend.txt` and the release tag in `llama\version.txt`, and reinstalls if the GPU
+  changes. A new build is unpacked to `llama.new\` and swapped in, so a failed update keeps
+  the old one.
+- **Minimum llama.cpp:** some models need a newer llama.cpp than people may have installed
+  (`hardware::min_llama_for_arch`: `cohere2moe` needs b9626). The need comes from the catalog
+  entry's `min_llama`, or the `general.architecture` in a GGUF's header for other files. When the
+  selected or downloading model needs a newer build than `llama\version.txt` (or, for older
+  installs, `llama-server --version`) reports, the worker downloads the newest build in the
+  background, stops llama-server, swaps it in and lets the state machine start it again.
+  Meanwhile the state machine's `llama_updating` input holds the server in
+  `Status::UpdatingLlama` instead of starting it on a build that can't load the model. A failure
+  becomes one `Status::Error`; it retries after 30 minutes, or on Restart / turning it on. The installer applies the same rule.
 - **Sizing:** llama.cpp's `--fit` (on by default, detected from `llama-server --help`) sets
   everything we leave unset to fit the free device memory:
   - GPU layers

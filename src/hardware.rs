@@ -202,6 +202,37 @@ pub fn pick_llama_release(releases: &[Vec<&str>], backend: Backend) -> Option<us
     })
 }
 
+/// llama.cpp's build number from a release tag (`b9626`) or `llama-server --version` output
+/// (`version: 9626 (8a1b2c3)`).
+pub fn llama_build(text: &str) -> Option<u32> {
+    static TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*b(\d+)\s*$").unwrap());
+    static VER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)^\s*version:\s*(\d+)\b").unwrap());
+    TAG.captures(text)
+        .or_else(|| VER.captures(text))
+        .and_then(|c| c[1].parse().ok())
+}
+
+/// The oldest llama.cpp build that loads a GGUF architecture, for architectures newer than the
+/// builds people may still have installed (llama.cpp refuses unknown ones).
+pub fn min_llama_for_arch(arch: &str) -> Option<u32> {
+    match arch {
+        // ggml-org/llama.cpp#24260, first released in b9626
+        "cohere2moe" => Some(9626),
+        _ => None,
+    }
+}
+
+/// Whether llama.cpp has to be updated for a model needing build `required`. An install whose
+/// build can't be told is assumed too old.
+pub fn llama_too_old(installed: Option<u32>, required: Option<u32>) -> bool {
+    match (installed, required) {
+        (_, None) => false,
+        (None, Some(_)) => true,
+        (Some(have), Some(need)) => have < need,
+    }
+}
+
 /// Context size llama-server settled on, from its log (`n_ctx = 131072` / `n_ctx_seq ...`).
 pub fn parse_n_ctx(server_log: &str) -> Option<u32> {
     static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bn_ctx\s*=\s*(\d+)").unwrap());
@@ -226,6 +257,31 @@ pub fn gib(bytes: u64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn llama_build_numbers() {
+        assert_eq!(llama_build("b9626"), Some(9626));
+        assert_eq!(llama_build(" b12609\n"), Some(12609));
+        assert_eq!(
+            llama_build("load_backend: loaded CPU backend\nversion: 9626 (4988f6e8)\nbuilt with MSVC 19.44 for x64\n"),
+            Some(9626)
+        );
+        assert_eq!(llama_build("bogus"), None);
+        assert_eq!(llama_build("b12x"), None);
+        assert_eq!(llama_build(""), None);
+    }
+
+    #[test]
+    fn llama_update_needed() {
+        assert_eq!(min_llama_for_arch("cohere2moe"), Some(9626));
+        assert_eq!(min_llama_for_arch("llama"), None);
+        assert!(!llama_too_old(None, None));
+        assert!(!llama_too_old(Some(1), None));
+        assert!(llama_too_old(None, Some(9626)));
+        assert!(llama_too_old(Some(9625), Some(9626)));
+        assert!(!llama_too_old(Some(9626), Some(9626)));
+        assert!(!llama_too_old(Some(12609), Some(9626)));
+    }
 
     const LIST: &str = "ggml_vulkan: Found 2 Vulkan devices:
 ggml_vulkan: 0 = AMD Radeon RX 7900 XTX (AMD proprietary driver) | uma: 0 | fp16: 1

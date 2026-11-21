@@ -31,6 +31,8 @@ pub struct CatalogModel {
     pub files: Vec<String>,
     pub size: u64,
     pub kind: Kind,
+    /// Oldest llama.cpp build that loads it (None = any the app installs).
+    pub min_llama: Option<u32>,
 }
 
 impl CatalogModel {
@@ -87,6 +89,23 @@ const FLASH_NEXT: [(&str, u64, u32); 7] = [
     ("UD-IQ1_S", 72_500_000_000, 3),
 ];
 
+/// Cohere's North Mini Code 1.0 (30B MoE, 3B active), a coding/agent model. Single-file quants.
+/// Needs a llama.cpp build with the `cohere2moe` architecture.
+const NORTH_MINI_CODE: [(&str, u64); 9] = [
+    ("Q8_0", 32_437_264_480),
+    ("UD-Q6_K_XL", 27_853_938_784),
+    ("UD-Q5_K_XL", 23_000_080_480),
+    ("UD-Q4_K_XL", 19_253_518_432),
+    ("UD-IQ4_XS", 15_230_132_320),
+    ("UD-Q3_K_XL", 14_343_037_024),
+    ("UD-IQ3_XXS", 11_708_375_136),
+    ("UD-Q2_K_XL", 10_480_001_120),
+    ("UD-IQ1_M", 9_379_799_136),
+];
+
+pub const NORTH_FAMILY: &str = "North Mini Code 1.0 (30B MoE, coding)";
+const FLASH_NEXT_FAMILY: &str = "Qwen 3.8 Flash-Next (125B MoE)";
+
 /// Lowest dense quant still worth recommending when a better model is possible.
 const DENSE_MIN_GOOD: &str = "UD-IQ3_XXS";
 
@@ -102,12 +121,13 @@ pub fn catalog() -> Vec<CatalogModel> {
             files: vec![format!("Qwen3.8-27B-{q}.gguf")],
             size: *size,
             kind: Kind::Dense,
+            min_llama: None,
         })
         .collect();
     v.extend(FLASH_NEXT.iter().map(|(q, size, shards)| {
         CatalogModel {
             id: format!("qwen3.8-flash-next:{q}"),
-            family: "Qwen 3.8 Flash-Next (125B MoE)",
+            family: FLASH_NEXT_FAMILY,
             quant: q,
             repo: "unsloth/Qwen3.8-Flash-Next-GGUF",
             files: (1..=*shards)
@@ -115,7 +135,18 @@ pub fn catalog() -> Vec<CatalogModel> {
                 .collect(),
             size: *size,
             kind: Kind::Moe,
+            min_llama: None,
         }
+    }));
+    v.extend(NORTH_MINI_CODE.iter().map(|(q, size)| CatalogModel {
+        id: format!("north-mini-code-1.0:{q}"),
+        family: NORTH_FAMILY,
+        quant: q,
+        repo: "unsloth/North-Mini-Code-1.0-GGUF",
+        files: vec![format!("North-Mini-Code-1.0-{q}.gguf")],
+        size: *size,
+        kind: Kind::Moe,
+        min_llama: crate::hardware::min_llama_for_arch("cohere2moe"),
     }));
     v
 }
@@ -186,6 +217,8 @@ pub fn fit_note(m: &CatalogModel, pc: &Machine) -> &'static str {
 /// 2. else Flash-Next, if the PC has the RAM for it;
 /// 3. else the best 27B quant that fits on the GPU at all;
 /// 4. else the smallest 27B that fits in GPU + RAM (slow, but it runs).
+///
+/// North Mini Code is a coding specialist, so it's offered but never recommended.
 pub fn recommend(pc: &Machine) -> Option<CatalogModel> {
     let all = catalog();
     let dense: Vec<&CatalogModel> = all.iter().filter(|m| m.kind == Kind::Dense).collect();
@@ -198,7 +231,7 @@ pub fn recommend(pc: &Machine) -> Option<CatalogModel> {
     }
     if let Some(m) = all
         .iter()
-        .filter(|m| m.kind == Kind::Moe)
+        .filter(|m| m.family == FLASH_NEXT_FAMILY)
         .find(|m| fit(m, pc) != Fit::TooBig)
     {
         return Some(m.clone());
@@ -255,6 +288,24 @@ mod tests {
             recommend(&pc(23.98, 32.0)).unwrap().primary_file(),
             crate::settings::DEFAULT_MODEL
         );
+    }
+
+    #[test]
+    fn north_mini_code_is_never_recommended() {
+        for (vram, ram) in [
+            (48.0, 64.0),
+            (24.0, 32.0),
+            (11.99, 32.0),
+            (11.99, 128.0),
+            (8.0, 64.0),
+        ] {
+            if let Some(m) = recommend(&pc(vram, ram)) {
+                assert_ne!(m.family, NORTH_FAMILY, "{vram} GiB VRAM, {ram} GiB RAM");
+            }
+        }
+        let q4 = find("north-mini-code-1.0:UD-Q4_K_XL").unwrap();
+        assert_eq!(fit_note(&q4, &pc(24.0, 32.0)), "fits your GPU");
+        assert_eq!(fit_note(&q4, &pc(12.0, 32.0)), "GPU + RAM");
     }
 
     #[test]
@@ -317,7 +368,7 @@ mod tests {
             }
         }
         // sizes are best-first within a family
-        for fam in ["Qwen 3.8 27B", "Qwen 3.8 Flash-Next (125B MoE)"] {
+        for fam in ["Qwen 3.8 27B", FLASH_NEXT_FAMILY, NORTH_FAMILY] {
             let sizes: Vec<u64> = all
                 .iter()
                 .filter(|m| m.family == fam)
@@ -338,6 +389,12 @@ mod tests {
             "UD-IQ1_S/Qwen3.8-Flash-Next-UD-IQ1_S-00002-of-00003.gguf"
         );
         assert!(by_primary_file("my-own-model.gguf").is_none());
+        let north = find("north-mini-code-1.0:UD-Q4_K_XL").unwrap();
+        assert_eq!(north.primary_file(), "North-Mini-Code-1.0-UD-Q4_K_XL.gguf");
+        assert_eq!(north.repo, "unsloth/North-Mini-Code-1.0-GGUF");
+        assert_eq!(north.kind, Kind::Moe);
+        assert_eq!(north.min_llama, Some(9626));
+        assert_eq!(find("qwen3.8-27b:UD-Q4_K_XL").unwrap().min_llama, None);
         assert!(find("qwen3.8-27b:UD-Q4_K_XL")
             .unwrap()
             .label()

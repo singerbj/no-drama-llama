@@ -34,6 +34,13 @@ pub fn is_qwen(model_file: &str) -> bool {
     model_file.to_ascii_lowercase().starts_with("qwen")
 }
 
+/// Cohere's North Mini Code: sampling from its model card (no reasoning switch).
+pub fn is_north_mini_code(model_file: &str) -> bool {
+    model_file
+        .to_ascii_lowercase()
+        .starts_with("north-mini-code")
+}
+
 /// q8_0 stores the KV cache in blocks of 32 values per attention head, so llama.cpp refuses it
 /// for models whose head size isn't a multiple of 32 (tiny test models, some small ones).
 pub fn q8_0_kv_fits(head_dims: Option<(u32, u32)>) -> bool {
@@ -122,6 +129,12 @@ pub fn server_args(
             ]
         };
         a.extend(sampling.iter().map(|x| x.to_string()));
+    } else if is_north_mini_code(&file) {
+        a.extend(
+            ["--temp", "1.0", "--top-p", "0.95"]
+                .iter()
+                .map(|x| x.to_string()),
+        );
     }
     a
 }
@@ -285,6 +298,27 @@ mod tests {
             assert!(a.contains(&"--jinja".to_string()));
         }
         assert!(is_qwen("qwen3.8-flash-next-UD-IQ1_S-00001-of-00003.gguf"));
+    }
+
+    #[test]
+    fn north_mini_code_gets_its_model_card_sampling() {
+        for reasoning in [Reasoning::None, Reasoning::Medium] {
+            let s = Settings {
+                reasoning,
+                ..Default::default()
+            };
+            let a = server_args(
+                &s,
+                Path::new("C:/LLM/models/North-Mini-Code-1.0-UD-Q4_K_XL.gguf"),
+                FIT,
+                None,
+            );
+            assert_eq!(arg(&a, "--temp"), Some("1.0"));
+            assert_eq!(arg(&a, "--top-p"), Some("0.95"));
+            assert_eq!(arg(&a, "--top-k"), None);
+            assert_eq!(arg(&a, "--chat-template-kwargs"), None);
+            assert!(a.contains(&"--jinja".to_string()));
+        }
     }
 
     #[test]

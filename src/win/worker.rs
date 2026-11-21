@@ -30,6 +30,8 @@ const UPDATE_EVERY: Duration = Duration::from_secs(24 * 3600);
 const FIRST_APP_UPDATE_CHECK: Duration = Duration::from_secs(60);
 const APP_UPDATE_EVERY: Duration = Duration::from_secs(6 * 3600);
 const APP_UPDATE_RETRY: Duration = Duration::from_secs(30 * 60);
+/// After a failed llama.cpp update for a model that needs a newer build.
+const LLAMA_UPDATE_RETRY: Duration = Duration::from_secs(30 * 60);
 
 pub type SettingsEdit = Box<dyn FnOnce(&mut Settings) + Send>;
 
@@ -48,6 +50,8 @@ pub enum Cmd {
         result: Result<Option<(crate::update::Offer, semver::Version)>, String>,
     },
     UpdateApplied(Result<semver::Version, String>),
+    /// A newer llama.cpp is downloaded and verified, ready to swap in.
+    LlamaDownloaded(Result<install::StagedLlama, String>),
     /// Download a catalog model; `switch` = use it once it's there.
     DownloadModel {
         id: String,
@@ -166,6 +170,13 @@ pub struct Worker {
     pc: crate::catalog::Machine,
     gpu_name: Option<String>,
     backend: Option<Backend>,
+    /// Installed llama.cpp build number, if it can be told
+    llama_build: Option<u32>,
+    /// Downloading a newer llama.cpp: the build the model needs
+    llama_update: Option<LlamaUpdate>,
+    llama_retry_at: Option<Instant>,
+    /// (model file, present, llama.cpp build it needs), so its header isn't read every tick
+    llama_need: Option<(String, bool, Option<u32>)>,
     download: Option<Download>,
     n_ctx: Option<u32>,
     /// Hugging Face base URL (a local server in tests)
@@ -190,6 +201,27 @@ pub struct Worker {
     pub(crate) laya_release_api: String,
     tx_ui: Sender<UiMsg>,
     tx_self: Sender<Cmd>,
+}
+
+struct LlamaUpdate {
+    need: u32,
+    cancel: Arc<AtomicBool>,
+}
+
+/// Logs a background llama.cpp download (nobody watches it in a console).
+struct LogReporter {
+    cancel: Arc<AtomicBool>,
+}
+
+impl crate::installer::Reporter for LogReporter {
+    fn step(&mut self, _: crate::installer::StepId) {}
+    fn info(&mut self, text: &str) {
+        log!("llama.cpp update: {text}");
+    }
+    fn progress(&mut self, _: u64, _: u64) {}
+    fn cancel_flag(&self) -> Arc<AtomicBool> {
+        self.cancel.clone()
+    }
 }
 
 fn mtime(p: &std::path::Path) -> Option<SystemTime> {
@@ -230,6 +262,13 @@ impl Worker {
         if gpu.is_none() {
             log!("GPU counters unavailable - GPU-based detection off");
         }
+        let llama_build = install::installed_llama_build(&p);
+        log!(
+            "llama.cpp: {}",
+            llama_build
+                .map(|b| format!("b{b}"))
+                .unwrap_or_else(|| "build unknown".into())
+        );
         let mut w = Worker {
             settings_mtime: mtime(&p.settings),
             p,
@@ -249,6 +288,10 @@ impl Worker {
             pc,
             gpu_name,
             backend: install::installed_backend(&p_for_probe),
+            llama_build,
+            llama_update: None,
+            llama_retry_at: None,
+            llama_need: None,
             download: None,
             n_ctx: None,
             hf_base: models::HF.to_string(),
@@ -276,6 +319,9 @@ impl Worker {
             let timeout = next.saturating_duration_since(Instant::now());
             match rx.recv_timeout(timeout) {
                 Ok(Cmd::Exit) => {
+                    if let Some(u) = &self.llama_update {
+                        u.cancel.store(true, Ordering::Relaxed);
+                    }
                     self.stop_server("tray exited");
                     self.stop_laya("tray exited");
                     let _ = self.tx_ui.send(UiMsg::Quit(None));
@@ -321,6 +367,7 @@ impl Worker {
                 if self.p.off_flag.exists() {
                     let _ = std::fs::remove_file(&self.p.off_flag);
                     self.machine.reset_failures();
+                    self.llama_retry_at = None;
                     self.laya.reset();
                 } else {
                     let _ = std::fs::write(&self.p.off_flag, b"");
@@ -329,6 +376,7 @@ impl Worker {
             Cmd::Restart => {
                 self.stop_server("restart");
                 self.machine.reset_failures();
+                self.llama_retry_at = None; // retry a failed llama.cpp update now
             }
             Cmd::Edit(f) => {
                 let old = self.s.clone();
@@ -434,6 +482,7 @@ impl Worker {
                     self.popup("Update failed", e, crate::state::Tone::Error);
                 }
             },
+            Cmd::LlamaDownloaded(r) => self.llama_downloaded(r),
             Cmd::DownloadModel { id, switch } => self.start_download(&id, switch),
             Cmd::CancelDownload => {
                 if let Some(d) = &self.download {
@@ -816,6 +865,105 @@ impl Worker {
         });
     }
 
+    // ------------------------------------------------------------- llama.cpp
+
+    /// The llama.cpp build the selected model, or the one downloading, needs.
+    fn llama_needed(&mut self) -> Option<u32> {
+        let name = self.s.model.clone();
+        let present = self.p.model(&name).exists();
+        let model_need = match &self.llama_need {
+            Some((n, pr, need)) if *n == name && *pr == present => *need,
+            _ => {
+                let need = install::llama_needed_for(&self.p, &name);
+                self.llama_need = Some((name, present, need));
+                need
+            }
+        };
+        let download_need = self.download.as_ref().and_then(|d| d.model.min_llama);
+        model_need.max(download_need)
+    }
+
+    /// Starts downloading the newest llama.cpp when the model needs a newer build than the
+    /// installed one (an architecture added since, e.g. after an app update or a download).
+    fn maybe_update_llama(&mut self) {
+        if self.llama_update.is_some()
+            || self.llama_retry_at.is_some_and(|t| Instant::now() < t)
+            || !self.p.server_exe.exists()
+        {
+            return;
+        }
+        let need = self.llama_needed();
+        if !crate::hardware::llama_too_old(self.llama_build, need) {
+            return;
+        }
+        let need = need.unwrap_or_default();
+        let backend = match self.backend {
+            Some(b) => b,
+            None => crate::hardware::choose_backend(self.nvidia()),
+        };
+        log!(
+            "llama.cpp {} is too old for {} (needs b{need}+) - updating",
+            self.llama_build
+                .map(|b| format!("b{b}"))
+                .unwrap_or_else(|| "(build unknown)".into()),
+            self.s.model
+        );
+        // The state machine holds the server meanwhile and says so.
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.llama_update = Some(LlamaUpdate {
+            need,
+            cancel: cancel.clone(),
+        });
+        let (tx, p) = (self.tx_self.clone(), self.p.clone());
+        std::thread::spawn(move || {
+            let mut r = LogReporter { cancel };
+            let result = install::download_llama_cpp(&p, None, backend, &mut r)
+                .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Cmd::LlamaDownloaded(result));
+        });
+    }
+
+    /// Swaps the downloaded llama.cpp in: stops llama-server for a moment, then the state
+    /// machine starts it again with the new build.
+    fn llama_downloaded(&mut self, result: Result<install::StagedLlama, String>) {
+        let Some(update) = self.llama_update.take() else {
+            return;
+        };
+        let applied = result.and_then(|staged| {
+            let tag = staged.tag.clone();
+            self.stop_server("updating llama.cpp");
+            install::apply_llama_cpp(&self.p, staged)
+                .map(|b| (tag, b))
+                .map_err(|e| format!("{e:#}"))
+        });
+        match applied {
+            Ok((tag, backend)) => {
+                log!("installed llama.cpp {tag} ({})", backend.label());
+                self.backend = Some(backend);
+                self.llama_build = crate::hardware::llama_build(&tag);
+                self.caps = probe::server_caps(&self.p.server_exe);
+                self.machine.reset_failures();
+                if crate::hardware::llama_too_old(self.llama_build, Some(update.need)) {
+                    // The newest release with a build for this PC is still too old.
+                    self.llama_retry_at = Some(Instant::now() + LLAMA_UPDATE_RETRY);
+                    self.machine.start_failed(format!(
+                        "needs llama.cpp b{} - the newest build for this PC is {tag}",
+                        update.need
+                    ));
+                } else {
+                    self.llama_retry_at = None;
+                }
+            }
+            Err(e) => {
+                log!("llama.cpp update failed: {e}");
+                self.llama_retry_at = Some(Instant::now() + LLAMA_UPDATE_RETRY);
+                // One error (not a run of crashes on the old build) until a retry or Restart
+                self.machine
+                    .start_failed(format!("couldn't update llama.cpp: {e}"));
+            }
+        }
+    }
+
     fn check_updates(&mut self, manual: bool) {
         if matches!(
             self.update,
@@ -949,6 +1097,7 @@ impl Worker {
 
     pub(crate) fn tick(&mut self) {
         self.sync_settings_file();
+        self.maybe_update_llama();
         self.procs.refresh();
         let server_pids = self.procs.pids_of(&self.p.server_exe);
         // Our own GPU users are never "a game": llama-server and Ollaya's runners.
@@ -968,6 +1117,7 @@ impl Worker {
                 && crate::paths::missing_parts(&self.p.models_dir, &self.s.model).is_empty(),
             server_exe_exists: self.p.server_exe.exists(),
             model_name: self.s.model.clone(),
+            llama_updating: self.llama_update.as_ref().map(|u| u.need),
         };
         let mut out = self.machine.step(&inputs);
         for a in std::mem::take(&mut out.actions) {
