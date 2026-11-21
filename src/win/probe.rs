@@ -45,6 +45,13 @@ pub fn devices(server_exe: &Path) -> Vec<Device> {
         .unwrap_or_default()
 }
 
+/// The build number `llama-server --version` reports (`version: 9626 (4988f6e8)`).
+pub fn llama_build(server_exe: &Path) -> Option<u32> {
+    sys::run_with_timeout(server_exe, &["--version"], Duration::from_secs(30))
+        .ok()
+        .and_then(|o| hardware::llama_build(&o))
+}
+
 pub fn server_caps(server_exe: &Path) -> ServerCaps {
     match sys::run_with_timeout(server_exe, &["--help"], Duration::from_secs(30)) {
         Ok(help) => ServerCaps {

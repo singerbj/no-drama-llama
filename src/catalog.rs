@@ -31,6 +31,8 @@ pub struct CatalogModel {
     pub files: Vec<String>,
     pub size: u64,
     pub kind: Kind,
+    /// Oldest llama.cpp build that loads it (None = any the app installs).
+    pub min_llama: Option<u32>,
 }
 
 impl CatalogModel {
@@ -119,6 +121,7 @@ pub fn catalog() -> Vec<CatalogModel> {
             files: vec![format!("Qwen3.8-27B-{q}.gguf")],
             size: *size,
             kind: Kind::Dense,
+            min_llama: None,
         })
         .collect();
     v.extend(FLASH_NEXT.iter().map(|(q, size, shards)| {
@@ -132,6 +135,7 @@ pub fn catalog() -> Vec<CatalogModel> {
                 .collect(),
             size: *size,
             kind: Kind::Moe,
+            min_llama: None,
         }
     }));
     v.extend(NORTH_MINI_CODE.iter().map(|(q, size)| CatalogModel {
@@ -142,6 +146,7 @@ pub fn catalog() -> Vec<CatalogModel> {
         files: vec![format!("North-Mini-Code-1.0-{q}.gguf")],
         size: *size,
         kind: Kind::Moe,
+        min_llama: crate::hardware::min_llama_for_arch("cohere2moe"),
     }));
     v
 }
@@ -388,6 +393,8 @@ mod tests {
         assert_eq!(north.primary_file(), "North-Mini-Code-1.0-UD-Q4_K_XL.gguf");
         assert_eq!(north.repo, "unsloth/North-Mini-Code-1.0-GGUF");
         assert_eq!(north.kind, Kind::Moe);
+        assert_eq!(north.min_llama, Some(9626));
+        assert_eq!(find("qwen3.8-27b:UD-Q4_K_XL").unwrap().min_llama, None);
         assert!(find("qwen3.8-27b:UD-Q4_K_XL")
             .unwrap()
             .label()

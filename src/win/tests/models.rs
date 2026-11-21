@@ -220,3 +220,93 @@ fn installed_backend_is_remembered() {
         Some(crate::hardware::Backend::Cuda13)
     );
 }
+
+#[test]
+fn llama_update_swaps_the_build_in_and_records_it() {
+    let (_t, dir) = long_tempdir();
+    let p = crate::paths::Paths::under(&dir);
+    std::fs::create_dir_all(&p.llama_dir).unwrap();
+    std::fs::write(&p.server_exe, b"old").unwrap();
+    std::fs::write(p.llama_dir.join("stale.dll"), b"old").unwrap();
+    std::fs::write(p.llama_dir.join("version.txt"), "b9000").unwrap();
+    assert_eq!(install::installed_llama_build(&p), Some(9000));
+
+    let main = dir.join("main.zip");
+    super::platform::make_zip(&main, &[("llama-server.exe", b"new"), ("ggml.dll", b"d")]);
+    let rt = dir.join("rt.zip");
+    super::platform::make_zip(&rt, &[("cudart64_13.dll", b"rt")]);
+    let staged = install::StagedLlama {
+        tag: "b12609".into(),
+        backend: crate::hardware::Backend::Cuda13,
+        main_zip: main.clone(),
+        runtime_zip: Some(rt.clone()),
+    };
+    assert_eq!(
+        install::apply_llama_cpp(&p, staged).unwrap(),
+        crate::hardware::Backend::Cuda13
+    );
+    assert_eq!(std::fs::read(&p.server_exe).unwrap(), b"new");
+    assert!(p.llama_dir.join("cudart64_13.dll").exists());
+    assert!(
+        !p.llama_dir.join("stale.dll").exists(),
+        "old build replaced"
+    );
+    assert_eq!(install::installed_llama_build(&p), Some(12609));
+    assert_eq!(
+        install::installed_backend(&p),
+        Some(crate::hardware::Backend::Cuda13)
+    );
+    assert!(!main.exists() && !rt.exists(), "downloads cleaned up");
+    assert!(!dir.join("llama.new").exists() && !dir.join("llama.old").exists());
+}
+
+#[test]
+fn failed_llama_update_keeps_the_old_build() {
+    let (_t, dir) = long_tempdir();
+    let p = crate::paths::Paths::under(&dir);
+    std::fs::create_dir_all(&p.llama_dir).unwrap();
+    std::fs::write(&p.server_exe, b"old").unwrap();
+    let bad = dir.join("bad.zip");
+    super::platform::make_zip(&bad, &[("readme.txt", b"no server here")]);
+    let staged = install::StagedLlama {
+        tag: "b12609".into(),
+        backend: crate::hardware::Backend::Vulkan,
+        main_zip: bad,
+        runtime_zip: None,
+    };
+    assert!(install::apply_llama_cpp(&p, staged).is_err());
+    assert_eq!(std::fs::read(&p.server_exe).unwrap(), b"old");
+    assert!(!dir.join("llama.new").exists());
+}
+
+#[test]
+fn llama_build_a_model_needs() {
+    let (_t, dir) = long_tempdir();
+    let p = crate::paths::Paths::under(&dir);
+    assert_eq!(
+        install::llama_needed_for(&p, "North-Mini-Code-1.0-UD-Q4_K_XL.gguf"),
+        Some(9626)
+    );
+    assert_eq!(
+        install::llama_needed_for(&p, "Qwen3.8-27B-UD-Q4_K_XL.gguf"),
+        None
+    );
+    assert_eq!(install::llama_needed_for(&p, "missing.gguf"), None);
+    // A file that isn't in the catalog: from its GGUF architecture
+    std::fs::create_dir_all(&p.models_dir).unwrap();
+    let mut f = b"GGUF".to_vec();
+    f.extend(3u32.to_le_bytes());
+    f.extend(0u64.to_le_bytes());
+    f.extend(1u64.to_le_bytes());
+    let key = "general.architecture";
+    f.extend((key.len() as u64).to_le_bytes());
+    f.extend(key.as_bytes());
+    f.extend(8u32.to_le_bytes());
+    f.extend(10u64.to_le_bytes());
+    f.extend(b"cohere2moe");
+    std::fs::write(p.model("my-north-finetune.gguf"), f).unwrap();
+    assert_eq!(
+        install::llama_needed_for(&p, "my-north-finetune.gguf"),
+        Some(9626)
+    );
+}

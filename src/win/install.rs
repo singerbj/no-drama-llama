@@ -304,6 +304,14 @@ pub fn llama_download_size(release: &Release, backend: Backend) -> Option<u64> {
     Some(size(main) + runtime.map_or(0, size))
 }
 
+/// A llama.cpp build downloaded and verified next to `llama\`, not in use yet.
+pub struct StagedLlama {
+    pub tag: String,
+    pub backend: Backend,
+    pub(crate) main_zip: PathBuf,
+    pub(crate) runtime_zip: Option<PathBuf>,
+}
+
 /// Installs the llama.cpp build for `backend` (falling back to Vulkan if a CUDA build is
 /// missing from the release). Returns the backend actually installed.
 pub fn install_llama_cpp(
@@ -312,6 +320,18 @@ pub fn install_llama_cpp(
     backend: Backend,
     r: &mut dyn Reporter,
 ) -> Result<Backend> {
+    let staged = download_llama_cpp(p, tag, backend, r)?;
+    apply_llama_cpp(p, staged)
+}
+
+/// Downloads and verifies the llama.cpp build for `backend` (newest release, or `tag`) without
+/// touching the installed one, so llama-server keeps running meanwhile.
+pub fn download_llama_cpp(
+    p: &Paths,
+    tag: Option<&str>,
+    backend: Backend,
+    r: &mut dyn Reporter,
+) -> Result<StagedLlama> {
     let rel = match tag {
         Some(t) => Release::parse(&net::get_text(&net::agent(), &format!("{LLAMA_RELEASES}/tags/{t}"))?)?,
         None => pick_llama_release(llama_releases()?, backend).with_context(|| {
@@ -342,18 +362,96 @@ pub fn install_llama_cpp(
         rel.tag_name,
         used.label()
     ));
-    let zip_path = p.root.join("llama-download.zip"); // admin-only, unlike %TEMP%
-    download_verified(asset(main), &zip_path, r)?;
-    extract_llama_zip(&zip_path, &p.llama_dir)?;
-    let _ = std::fs::remove_file(&zip_path);
-    if let Some(rt) = runtime {
-        r.info("Downloading the CUDA runtime...");
-        download_verified(asset(rt), &zip_path, r)?;
-        extract_zip_into(&zip_path, &p.llama_dir)?;
-        let _ = std::fs::remove_file(&zip_path);
+    // In the admin-only root, unlike %TEMP%
+    let main_zip = p.root.join("llama-download.zip");
+    download_verified(asset(main), &main_zip, r)?;
+    let runtime_zip = match runtime {
+        Some(rt) => {
+            r.info("Downloading the CUDA runtime...");
+            let z = p.root.join("llama-runtime-download.zip");
+            download_verified(asset(rt), &z, r)?;
+            Some(z)
+        }
+        None => None,
+    };
+    Ok(StagedLlama {
+        tag: rel.tag_name,
+        backend: used,
+        main_zip,
+        runtime_zip,
+    })
+}
+
+/// Puts a downloaded build in place of `llama\`. llama-server must be stopped. It's unpacked
+/// beside the old one and swapped in, so a failure leaves the old build working.
+pub fn apply_llama_cpp(p: &Paths, staged: StagedLlama) -> Result<Backend> {
+    let new = p.root.join("llama.new");
+    let old = p.root.join("llama.old");
+    let cleanup = |s: &StagedLlama| {
+        let _ = std::fs::remove_file(&s.main_zip);
+        if let Some(z) = &s.runtime_zip {
+            let _ = std::fs::remove_file(z);
+        }
+    };
+    let unpacked = (|| -> Result<()> {
+        extract_llama_zip(&staged.main_zip, &new)?;
+        if let Some(z) = &staged.runtime_zip {
+            extract_zip_into(z, &new)?;
+        }
+        std::fs::write(new.join("backend.txt"), staged.backend.as_str())?;
+        std::fs::write(new.join(LLAMA_VERSION_FILE), &staged.tag)?;
+        Ok(())
+    })();
+    cleanup(&staged);
+    if let Err(e) = unpacked {
+        let _ = std::fs::remove_dir_all(&new);
+        return Err(e);
     }
-    std::fs::write(p.llama_dir.join("backend.txt"), used.as_str())?;
-    Ok(used)
+    let _ = std::fs::remove_dir_all(&old);
+    if p.llama_dir.exists() {
+        // A just-stopped llama-server can hold its files for a moment.
+        let mut tries = 0;
+        while let Err(e) = std::fs::rename(&p.llama_dir, &old) {
+            tries += 1;
+            if tries >= 20 {
+                let _ = std::fs::remove_dir_all(&new);
+                return Err(e).context("couldn't move the old llama.cpp aside");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+    if let Err(e) = std::fs::rename(&new, &p.llama_dir) {
+        let _ = std::fs::rename(&old, &p.llama_dir);
+        return Err(e).context("couldn't put the new llama.cpp in place");
+    }
+    let _ = std::fs::remove_dir_all(&old);
+    Ok(staged.backend)
+}
+
+/// Release tag of the installed llama.cpp, written since this file existed.
+const LLAMA_VERSION_FILE: &str = "version.txt";
+
+/// Build number of the installed llama.cpp: the recorded release tag, or (for builds installed
+/// before it was recorded) what `llama-server --version` says. None if neither can tell.
+pub fn installed_llama_build(p: &Paths) -> Option<u32> {
+    if !p.server_exe.exists() {
+        return None;
+    }
+    std::fs::read_to_string(p.llama_dir.join(LLAMA_VERSION_FILE))
+        .ok()
+        .and_then(|t| hardware::llama_build(&t))
+        .or_else(|| probe::llama_build(&p.server_exe))
+}
+
+/// Oldest llama.cpp build the models-folder file `name` needs: from the catalog, else from the
+/// architecture in its GGUF header.
+pub fn llama_needed_for(p: &Paths, name: &str) -> Option<u32> {
+    if let Some(m) = catalog::by_primary_file(name) {
+        return m.min_llama;
+    }
+    let f = std::fs::File::open(p.model(name)).ok()?;
+    crate::gguf::architecture(std::io::BufReader::new(f))
+        .and_then(|a| hardware::min_llama_for_arch(&a))
 }
 
 /// Extracts a zip's files flat into `dir` (the CUDA runtime DLLs go next to llama-server.exe).
@@ -804,12 +902,14 @@ pub fn install(opts: &InstallOptions, r: &mut dyn Reporter) -> Result<Installed>
     }
     r.info(&format!("llama.cpp build: {}", backend.label()));
 
+    let mut llama_done = false;
     if opts.update_llama
         || !p.server_exe.exists()
         || installed_backend(&p).is_some_and(|b| b != backend)
     {
         begin(r, StepId::LlamaCpp)?;
         install_llama_cpp(&p, opts.llama_tag.as_deref(), backend, r)?;
+        llama_done = true;
     }
     let (pc, gpu) = probe::machine(&p.server_exe);
     r.info(&format!(
@@ -818,7 +918,25 @@ pub fn install(opts: &InstallOptions, r: &mut dyn Reporter) -> Result<Installed>
             .unwrap_or("none found (the model will run on the CPU)"),
         hardware::gib(pc.ram)
     ));
-    if let Some(m) = choose_model(&p, opts, &pc, r) {
+    let model = choose_model(&p, opts, &pc, r);
+    // The model it'll run (the one being downloaded, else the configured one) may need a
+    // newer llama.cpp than the one installed (an architecture added since).
+    let need = match &model {
+        Some(m) => m.min_llama,
+        None => llama_needed_for(&p, &Settings::load(&p.settings).0.model),
+    };
+    if !llama_done
+        && opts.llama_tag.is_none()
+        && hardware::llama_too_old(installed_llama_build(&p), need)
+    {
+        begin(r, StepId::LlamaCpp)?;
+        r.info(&format!(
+            "This model needs llama.cpp b{} or newer.",
+            need.unwrap_or_default()
+        ));
+        install_llama_cpp(&p, None, installed_backend(&p).unwrap_or(backend), r)?;
+    }
+    if let Some(m) = model {
         begin(r, StepId::Model)?;
         install_model(&p, &m, r)?;
     }
