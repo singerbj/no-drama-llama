@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 minisign-verify = "0.3"
 regex = "1"
@@ -20,12 +20,12 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = "0.11"
 
 [target.'cfg(windows)'.dependencies]
-global-hotkey = "0.8"
+global-hotkey = "0.10"
 steamlocate = "2"
 # Settings window. custom-protocol: always serve the bundled UI (we build with plain cargo).
 tauri = { version = "2.11", default-features = false, features = ["wry", "compression", "custom-protocol"] }
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
-tray-icon = "0.25"
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
+tray-icon = "0.26"
 ureq = { version = "3", default-features = false, features = ["native-tls"] }
 winreg = "0.56"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
